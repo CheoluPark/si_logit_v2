@@ -23,7 +23,12 @@ pub struct DeviceRow {
     pub is_self: bool,
 }
 
-/// 启动时 upsert 当前机器一行；保留已有的 display_name / color / icon（用户改过的不被覆盖）。
+/// Registers this machine's row at startup and queues it for the other devices.
+///
+/// When the row already exists, only last_seen_at and os are refreshed.
+/// display_name / color / icon are what the user set on the devices page, so a
+/// restart must not overwrite them; os feeds the peers' cross-OS filter, so it
+/// has to be true every time.
 pub async fn upsert_self(
     pool: &DbPool,
     device_id: String,
@@ -35,12 +40,11 @@ pub async fn upsert_self(
     let now = utc_now_rfc3339();
     pool.0
         .call(move |conn| {
-            // 先把所有 is_self 清掉，确保只有一行 self
             conn.execute("UPDATE devices SET is_self = 0", [])
                 .db()?;
 
-            // upsert：如果当前 device_id 已经有行，只更新 last_seen_at / os / is_self；
-            // 否则插一条新的
+            // TODO(ADR-0003): once process paths carry a device or stop syncing, the
+            // cross-OS filter has nothing left to protect and os needs no refreshing.
             conn.execute(
                 "INSERT INTO devices (device_id, display_name, color, icon, os, last_seen_at, is_self, updated_at)
                  VALUES (?1, ?2, ?3, ?4, ?5, ?6, 1, ?6)
@@ -73,7 +77,9 @@ pub async fn upsert_self(
     Ok(())
 }
 
-/// 列出所有未软删的设备（self 优先，其余按 last_seen_at 倒序）。
+/// Lists all devices that have not been soft-deleted: the current device stays pinned first,
+/// and the remaining devices are sorted by last_seen_at in descending order.
+/// Devices with no activity history have last_seen_at = NULL and are placed at the end.
 pub async fn list_all(pool: &DbPool) -> Result<Vec<DeviceRow>> {
     let rows = pool
         .0

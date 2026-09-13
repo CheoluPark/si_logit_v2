@@ -2,34 +2,27 @@ use rusqlite::{params, Connection};
 
 use crate::storage::utc_now_rfc3339;
 
-/// outbox 操作类型
+/// Value written to the outbox `op` column. Push never reads it; a deletion
+/// travels as an upsert of a row carrying `deleted_at`.
 #[derive(Debug, Clone, Copy)]
 pub enum OutboxOp {
     Upsert,
-    /// 软删 / 整体删除占位；当前业务路径只走 Upsert（带 deleted_at），保留以备未来云端硬删
-    #[allow(dead_code)]
-    Delete,
 }
 
 impl OutboxOp {
-    /// 序列化成 outbox 表里 `op` 字段的字符串。
     pub fn as_str(self) -> &'static str {
         match self {
             OutboxOp::Upsert => "upsert",
-            OutboxOp::Delete => "delete",
         }
     }
 }
 
-/// outbox 实体类型 —— 对应 Drive 上的文件 kind
+/// Value written to the outbox `entity` column; it decides which cloud file the
+/// next push rewrites.
 #[derive(Debug, Clone, Copy)]
 pub enum OutboxEntity {
     Activity,
     Category,
-    /// No local producer any more — push derives app_categories.json from
-    /// groups. Kept so the wire kind and `as_str` stay defined.
-    #[allow(dead_code)]
-    AppCategory,
     ProcessPath,
     Device,
     AppIcon,
@@ -38,12 +31,10 @@ pub enum OutboxEntity {
 }
 
 impl OutboxEntity {
-    /// 序列化成 outbox 表 `entity` 字段的字符串，对应 Drive 上的文件 kind。
     pub fn as_str(self) -> &'static str {
         match self {
             OutboxEntity::Activity => "activity",
             OutboxEntity::Category => "category",
-            OutboxEntity::AppCategory => "app_category",
             OutboxEntity::ProcessPath => "process_path",
             OutboxEntity::Device => "device",
             OutboxEntity::AppIcon => "app_icon",
@@ -53,10 +44,15 @@ impl OutboxEntity {
     }
 }
 
-/// 在已有事务里写一条 outbox 行。业务表写入与这条 outbox 写入必须共享同一个 conn / 同一个事务，
-/// 才能保证"业务持久化即同步可达"。
+/// Marks the cloud file behind this entity as dirty, so the next push rewrites it.
 ///
-/// `payload` 是 JSON 字符串：upsert 时是当前行的快照；delete 时通常只需要 entity_pk，payload 可以为 "{}"。
+/// Must run in the same transaction as the business write. If the table write
+/// lands and this row does not, the file is never marked dirty, and the change
+/// only goes out once some later change to the same file marks it dirty again.
+///
+/// An activity's `payload` must carry `localDate`: push uses it to find which
+/// day's file to rewrite, and drops the row without it. Push does not read the
+/// `payload` of any other entity.
 pub fn enqueue(
     conn: &Connection,
     op: OutboxOp,

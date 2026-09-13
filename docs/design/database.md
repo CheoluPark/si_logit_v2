@@ -105,10 +105,10 @@ Queue of local changes waiting to be pushed to the cloud. Each business write en
 | Field | Type | Constraints | Description |
 |---|---|---|---|
 | id | INTEGER | Primary key, autoincrement | |
-| op | TEXT | NOT NULL | `'upsert'`. `'delete'` is defined but unused — deletions are upserts carrying `deletedAt` |
-| entity | TEXT | NOT NULL | Kind of row: `activity`, `category`, `app_group`, `app_group_member`, `app_category`, `process_path`, `device`, `app_icon` |
+| op | TEXT | NOT NULL | Always `'upsert'`, and nothing reads it: push only uses `entity` and `payload`. Deletions are upserts carrying `deletedAt` |
+| entity | TEXT | NOT NULL | Which cloud file the next push rewrites: `activity`, `category`, `app_group`, `app_group_member`, `process_path`, `device`, `app_icon`. `app_category` is no longer written, but push still accepts rows older versions left behind |
 | entity_pk | TEXT | NOT NULL | Primary key of the changed row |
-| payload | TEXT | NOT NULL | JSON snapshot of the whole row (not a diff), camelCase keys — what the receiving device applies with last-write-wins |
+| payload | TEXT | NOT NULL | JSON. Push reads it only for `activity`, to take `localDate` and pick the day's file; for every other entity it is ignored. It is never sent to other devices — push rebuilds each file from the tables |
 | created_at | TEXT | NOT NULL | |
 | attempts | INTEGER | NOT NULL, DEFAULT 0 | Failed push attempts so far |
 | last_error | TEXT | | Message from the last failed attempt |
@@ -174,18 +174,30 @@ Foreign keys: none.
 
 ## process_paths
 
-Executable path per process name, recorded by the capture side so the UI can resolve and show the app behind a process name. Synced as the `process_path` entity.
+Executable path per process name, recorded by capture so an icon can be extracted from the executable. That is its only use; the frontend never sees a path. Synced as the `process_path` entity.
 
 | Field | Type | Constraints | Description |
 |---|---|---|---|
 | process_name | TEXT | Primary key | Process name as reported by the OS |
-| exe_path | TEXT | NOT NULL | Absolute path of the executable on the device that saw it |
+| exe_path | TEXT | NOT NULL | Absolute path of the executable. Meant to be this device's, but sync can replace it with another device's path — see ADR-0003 |
 | seen_at | TEXT | NOT NULL | When the path was recorded |
 | updated_at | TEXT | NOT NULL, DEFAULT epoch | Last-write-wins timestamp, UTC. Added after the first schema |
 
 No `deleted_at`: the table cannot tombstone. App deletion physically deletes the row.
 Indexes: none beyond the primary key.
 Foreign keys: none.
+
+Everything that touches the table. Check each one before changing its shape:
+
+| Kind | Function | What it does |
+|---|---|---|
+| Write | `repo::process_paths::upsert`, called from `capture::service` | Records this device's path whenever an app gains focus. Queues an outbox row only when the path differs from the stored one |
+| Read | `commands::icons::resolve_icon_png`, behind the `get_app_icon` and `get_app_icon_data_url` commands | Last of three fallbacks: extracts the icon from the executable when neither the file cache nor a synced icon has it |
+| Read | `repo::app_icons::backfill_db_from_cache_or_extract`, called at startup from `bootstrap` | Walks every `process_name` and extracts an icon for any that has none, so peers can pull it |
+| Delete | `commands::storage::purge_activities` | Clears the whole table |
+| Delete | `repo::app_groups::purge_with_data` | Deletes the rows of the app being deleted |
+| Sync out | `sync::engine::push::build_process_paths` | Exports the whole table as `device.<id>.process_paths.json` |
+| Sync in | `sync::engine::pull::merge_process_paths` | Merges a peer's file row by row, last-write-wins on `process_name`. Skipped for peers on a different OS |
 
 ## app_icons
 
