@@ -105,10 +105,10 @@ Queue of local changes waiting to be pushed to the cloud. Each business write en
 | Field | Type | Constraints | Description |
 |---|---|---|---|
 | id | INTEGER | Primary key, autoincrement | |
-| op | TEXT | NOT NULL | `'upsert'`. `'delete'` is defined but unused — deletions are upserts carrying `deletedAt` |
-| entity | TEXT | NOT NULL | Kind of row: `activity`, `category`, `app_group`, `app_group_member`, `app_category`, `process_path`, `device`, `app_icon` |
+| op | TEXT | NOT NULL | Always `'upsert'`, and nothing reads it: push only uses `entity` and `payload`. Deletions are upserts carrying `deletedAt` |
+| entity | TEXT | NOT NULL | Which cloud file the next push rewrites: `activity`, `category`, `app_group`, `app_group_member`, `process_path`, `device`, `app_icon`. `app_category` is no longer written, but push still accepts rows older versions left behind |
 | entity_pk | TEXT | NOT NULL | Primary key of the changed row |
-| payload | TEXT | NOT NULL | JSON snapshot of the whole row (not a diff), camelCase keys — what the receiving device applies with last-write-wins |
+| payload | TEXT | NOT NULL | JSON. Push reads it only for `activity`, to take `localDate` and pick the day's file; for every other entity it is ignored. It is never sent to other devices — push rebuilds each file from the tables |
 | created_at | TEXT | NOT NULL | |
 | attempts | INTEGER | NOT NULL, DEFAULT 0 | Failed push attempts so far |
 | last_error | TEXT | | Message from the last failed attempt |
