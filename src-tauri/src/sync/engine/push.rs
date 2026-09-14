@@ -56,6 +56,22 @@ pub(super) async fn flush_push(inner: &Arc<Inner>) -> Result<()> {
         }
     };
 
+    // TODO(ADR-0004): remove once active devices have upgraded past the release
+    // that stopped publishing app_categories.json.
+    if !inner
+        .legacy_app_categories_checked
+        .load(std::sync::atomic::Ordering::SeqCst)
+    {
+        match delete_legacy_app_categories_file(inner, &mut token).await {
+            Ok(()) => inner
+                .legacy_app_categories_checked
+                .store(true, std::sync::atomic::Ordering::SeqCst),
+            Err(e) => {
+                log::warn!("push: old app_categories file not removed, retrying next tick: {e}")
+            }
+        }
+    }
+
     // 可选上云数据集(AI 总结/聊天历史/屏幕记忆):水位线检测,与 outbox 无关,
     // 放在 outbox 早退之前保证每轮 push tick 都有机会跑到。
     match crate::repo::settings::load(&inner.pool).await {
@@ -142,6 +158,38 @@ pub(super) async fn flush_push(inner: &Arc<Inner>) -> Result<()> {
     }
 
     log::info!("sync push 成功，共 {} 行 outbox 出队", succeeded_ids.len());
+    Ok(())
+}
+
+/// Deletes this device's `app_categories.json` from the cloud. Versions before
+/// this one published it; nothing reads it any more, and it keeps process names
+/// the user may since have removed. Only this device's copy is touched: every
+/// device cleans up its own file once it upgrades.
+///
+/// TODO(ADR-0004): remove once active devices have upgraded.
+async fn delete_legacy_app_categories_file(
+    inner: &Arc<Inner>,
+    token: &mut TokenInfo,
+) -> Result<()> {
+    if inner.self_id.is_empty() {
+        return Ok(());
+    }
+    let name = format!("device.{}.app_categories.json", inner.self_id);
+    let files = with_token_retry(&inner.pool, token, |tok| {
+        let drive = &inner.drive;
+        async move { drive.list_appdata_files(&tok, "").await }
+    })
+    .await?;
+    let Some(file) = files.into_iter().find(|f| f.name == name) else {
+        return Ok(());
+    };
+    with_token_retry(&inner.pool, token, |tok| {
+        let drive = &inner.drive;
+        let id = file.id.clone();
+        async move { drive.delete(&tok, &id).await }
+    })
+    .await?;
+    log::info!("push: removed {name} from the cloud");
     Ok(())
 }
 

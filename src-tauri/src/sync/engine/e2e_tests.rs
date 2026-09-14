@@ -1025,6 +1025,45 @@ async fn metadata_seven_entities_cross_device_roundtrip() {
     assert_eq!(outbox_count(&b.pool).await, 0, "B pull 后 outbox 应仍为空");
 }
 
+/// ADR-0004: a device that upgrades from a version which still published
+/// `app_categories.json` deletes its own copy on the first push after launch.
+/// Other devices' copies stay: each device cleans up its own once it upgrades.
+#[tokio::test]
+async fn first_push_deletes_own_legacy_app_categories_file() {
+    let drive = Arc::new(InMemoryDriveStore::new());
+    let a = make_device("device-a", drive.clone()).await;
+    drive
+        .upsert_by_name("device.device-a.app_categories.json", b"[]")
+        .await
+        .unwrap();
+    drive
+        .upsert_by_name("device.device-b.app_categories.json", b"[]")
+        .await
+        .unwrap();
+
+    a.engine.sync_now().await.expect("A sync 应成功");
+
+    let names: Vec<String> = drive
+        .list_appdata_files("")
+        .await
+        .unwrap()
+        .into_iter()
+        .map(|f| f.name)
+        .collect();
+    assert!(
+        !names
+            .iter()
+            .any(|n| n == "device.device-a.app_categories.json"),
+        "本机那份 app_categories 文件应被删掉(现有:{names:?})"
+    );
+    assert!(
+        names
+            .iter()
+            .any(|n| n == "device.device-b.app_categories.json"),
+        "别的设备那份不能动(现有:{names:?})"
+    );
+}
+
 /// 任务 7：OS 过滤 + 游标 stall 三段式。
 /// ① 只有 device-x 的 process_paths 文件、meta 未到 → OS 未知,游标不越过、表不写;
 /// ② 补传同 OS meta → 下轮两个文件都合并,游标推进到 meta 的 modifiedTime;
