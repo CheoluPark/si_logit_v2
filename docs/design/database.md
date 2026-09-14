@@ -85,19 +85,6 @@ Maps each process name to its group. Every process name ever seen has an active 
 
 Indexes: `(group_id)`.
 
-## app_categories (Deprecated)
-
-**Legacy mirror** of `process_name → category_id`, from before groups existed. Reads stopped using it in **v0.7.0**, when `categories::list` and `list_unclassified` switched to the group chain. Local writes stop in **v0.8.23**: sync push now derives the equivalent file from `app_group_members ⋈ app_groups`, and pull still stores what older peers send so the `app_category` sync entity stays compatible. Nothing reads it.
-
-| Field | Type | Constraints | Description |
-|---|---|---|---|
-| process_name | TEXT | Primary key | |
-| category_id | TEXT | NOT NULL, FK → `categories(id)` | The only foreign key that validates a category id — which is why `app_groups` needed explicit validation once this table stopped being written |
-| updated_at | TEXT | NOT NULL, DEFAULT epoch | |
-| deleted_at | TEXT | | |
-
-Indexes: none beyond the primary key.
-
 ## sync_outbox
 
 Queue of local changes waiting to be pushed to the cloud. Each business write enqueues a row in the same transaction, so a persisted change is always sync-reachable. Rows are deleted after a successful push.
@@ -106,7 +93,7 @@ Queue of local changes waiting to be pushed to the cloud. Each business write en
 |---|---|---|---|
 | id | INTEGER | Primary key, autoincrement | |
 | op | TEXT | NOT NULL | Always `'upsert'`, and nothing reads it: push only uses `entity` and `payload`. Deletions are upserts carrying `deletedAt` |
-| entity | TEXT | NOT NULL | Which cloud file the next push rewrites: `activity`, `category`, `app_group`, `app_group_member`, `process_path`, `device`, `app_icon`. `app_category` is no longer written, but push still accepts rows older versions left behind |
+| entity | TEXT | NOT NULL | Which cloud file the next push rewrites: `activity`, `category`, `app_group`, `app_group_member`, `process_path`, `device`, `app_icon`. A row with any other entity, such as `app_category` left behind by versions before v38, is logged and deleted |
 | entity_pk | TEXT | NOT NULL | Primary key of the changed row |
 | payload | TEXT | NOT NULL | JSON. Push reads it only for `activity`, to take `localDate` and pick the day's file; for every other entity it is ignored. It is never sent to other devices — push rebuilds each file from the tables |
 | created_at | TEXT | NOT NULL | |

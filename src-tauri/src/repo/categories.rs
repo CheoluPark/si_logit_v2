@@ -483,8 +483,6 @@ pub async fn list_unclassified(pool: &DbPool, days_back: u32) -> Result<Vec<Uncl
     let rows = pool
         .0
         .call(move |conn| {
-            // Never read app_categories here: it is no longer maintained locally
-            // (push derives it), so it says nothing about current assignments.
             let sql = format!(
                 "SELECT a.process_name,
                         CAST(SUM(a.duration_secs) / 60 AS INTEGER) AS minutes,
@@ -529,17 +527,14 @@ mod tests {
     use super::*;
     use crate::repo::test_util::fresh_test_pool;
 
-    /// 钉死 bug：当 app_group_members + app_groups.category_id 有数据但 app_categories
-    /// 镜像表为空时（典型 backfill 漏镜像 / sync 顺序错位），categories::list 仍应
-    /// 返回该 process_name —— 因为现在直接读真实源而不是镜像表。
-    ///
-    /// 旧实现（读 app_categories）下：apps 列表会是空，UI 显示"暂无绑定应用"。
-    /// 新实现（JOIN app_group_members + app_groups）：直接拿到 process_name。
+    /// 钉死：categories::list 的 apps 列表来自 app_group_members ⋈ app_groups。
+    /// 它曾经读一张镜像表（app_categories，v38 已删），镜像漏写时 apps 列表为空，
+    /// UI 显示"暂无绑定应用"。
     #[tokio::test]
-    async fn list_returns_app_when_only_app_groups_has_category_no_app_categories_mirror() {
+    async fn list_reads_apps_from_group_chain() {
         let pool = fresh_test_pool().await;
 
-        // 模拟 capture 写入：建组（带 category）+ 加成员；**故意不写 app_categories 镜像**。
+        // 模拟 capture 写入：建组（带 category）+ 加成员。
         pool.0
             .call(|conn| {
                 let now = "2026-05-17T10:00:00Z";
@@ -555,7 +550,6 @@ mod tests {
                      VALUES('Code', 'Visual Studio Code', ?1, NULL)",
                     rusqlite::params![now],
                 )?;
-                // **故意不**写 app_categories —— 模拟镜像 lag
                 Ok(())
             })
             .await
@@ -1174,7 +1168,7 @@ mod tests {
 
     /// 为什么测：删分类时若不清 app_groups.category_id，组还挂在幽灵分类上——
     /// "待归类"卡片不出现该 app、报表又解析不到分类，两边都看不见它。
-    /// 期望：组降级回未分类（而不是连坐删组），app_categories 镜像行同步软删。
+    /// 期望：组降级回未分类（而不是连坐删组）。
     #[tokio::test]
     async fn delete_returns_member_group_to_unclassified() {
         let pool = fresh_test_pool().await;
@@ -1216,7 +1210,7 @@ mod tests {
     }
 
     /// 为什么测：cascade 在本机删除和 sync pull 两条路径上都会被调用；若不幂等，
-    /// 每次 pull 都给同一批 app_categories / app_groups 重复入 outbox，
+    /// 每次 pull 都给同一批 app_groups 重复入 outbox，
     /// 两台设备之间形成推送风暴。
     #[tokio::test]
     async fn cascade_second_run_is_noop_without_new_outbox_rows() {

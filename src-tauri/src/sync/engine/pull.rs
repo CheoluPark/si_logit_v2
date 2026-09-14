@@ -264,7 +264,7 @@ pub(super) async fn flush_pull(inner: &Arc<Inner>) -> Result<()> {
     // Pass 2: 其余类型；对平台特定的两类做 OS 过滤。
     //
     // FK 依赖排序:同一批内「被引用方」(categories / app_groups)必须先于
-    // 「引用方」(app_categories / app_group_members)合并——push 端 dirty 文件按
+    // 「引用方」(app_group_members)合并——push 端 dirty 文件按
     // HashMap 随机序上传,若子表文件的 modifiedTime 恰好在前,行级 INSERT 会撞
     // FOREIGN KEY 失败,被 merge_lww_simple 单行降级跳过,而游标照常越过该文件,
     // 该行从此永不再被拉取(同 tick「新建分类 + 给应用归类」约一半概率踩中,
@@ -344,7 +344,7 @@ pub(super) async fn flush_pull(inner: &Arc<Inner>) -> Result<()> {
             continue;
         }
 
-        // app_categories / process_paths 是平台特定的：
+        // process_paths 是平台特定的：
         //   Windows tracker 写 process_name = "chrome.exe"，exe_path = "C:\\..."
         //   macOS tracker  写 process_name = "Google Chrome"，exe_path = "/Applications/.../MacOS/..."
         // 跨 OS 合并要么完全无用（key 对不上），要么坏事（同名 key 撞车，把本机能用的路径覆盖掉，icon 提取失败）。
@@ -364,9 +364,9 @@ pub(super) async fn flush_pull(inner: &Arc<Inner>) -> Result<()> {
                 }
                 Some(_) => {} // 同 OS：正常处理
                 // OS 未知：多半是对端的 meta 文件还没到（push 是 HashMap 随机序，
-                // app_categories 可能先落 Drive）。**不标 handled**——让游标停在
+                // process_paths 可能先落 Drive）。**不标 handled**——让游标停在
                 // 这里，下轮 meta 到了再处理；标了 handled 游标越过后（list 用严格
-                // `modifiedTime >`）这份文件永远不会再被拉，同 OS 对端的归类数据
+                // `modifiedTime >`）这份文件永远不会再被拉，同 OS 对端的进程路径
                 // 就永久缺失。
                 None => {
                     log::debug!(
