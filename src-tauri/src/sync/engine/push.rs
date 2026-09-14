@@ -7,7 +7,7 @@ use std::sync::Arc;
 use serde_json::Value;
 
 use super::io::{self, OutboxRow};
-use super::{format_sync_error, with_token_retry, Inner};
+use super::{format_sync_error, sync_error_prefix, with_token_retry, Inner};
 use crate::error::{Error, Result};
 use crate::repo::sql::FROM_MEMBER_GROUP;
 use crate::storage::{utc_now_rfc3339, DbPool, SqliteResultExt};
@@ -45,12 +45,14 @@ pub(super) async fn flush_push(inner: &Arc<Inner>) -> Result<()> {
             return Ok(());
         }
         Err(e) => {
-            // 默认日志级别只记概述：避免把 OAuth body / 错误链里可能携带的
-            // 用户邮箱 / account id / OAuth body 落到日志文件；
-            // 错误分类后的 status 字符串已经带 [CRED_EXPIRED] / [TRANSIENT] 前缀，
-            // UI 可读且不含原始 raw。排查时用 RUST_LOG=hindsight=debug 看 detail
-            log::warn!("sync push 拿不到有效 token（详情见 status）");
-            log::debug!("token error detail: {e}");
+            // warn carries the error's class but not its text, and the detail goes to
+            // debug: only info and above is printed by default, so start with
+            // RUST_LOG=hindsight=debug to see it. What the user sees goes through status.
+            log::warn!(
+                "sync push: no valid token {}(see status)",
+                sync_error_prefix(&e)
+            );
+            log::debug!("sync push: token error: {e}");
             inner.status.write().await.last_error = Some(format_sync_error(&e));
             return Ok(());
         }

@@ -31,10 +31,11 @@ use crate::sync::drive::DriveBackend;
 pub(super) const ERR_PREFIX_CRED_EXPIRED: &str = "[CRED_EXPIRED] ";
 pub(super) const ERR_PREFIX_TRANSIENT: &str = "[TRANSIENT] ";
 
-/// 把同步过程产生的 Error 归类成"需要用户介入" vs "等下个 tick 自动重试就行"，
-/// 然后加上稳定前缀给前端识别。原文 e.to_string() 拼在前缀后面，UI 显示时去前缀。
-pub(super) fn format_sync_error(e: &Error) -> String {
-    let prefix = match e {
+/// Classifies a sync error as needing the user to act, or as something the next
+/// tick will retry, and returns the matching prefix. It never looks at the
+/// error's text, so the result is safe to log.
+pub(super) fn sync_error_prefix(e: &Error) -> &'static str {
+    match e {
         // 400 and 401 are Google saying it no longer accepts this refresh token:
         // the user revoked the grant, or the token expired.
         Error::OAuthHttp {
@@ -49,15 +50,30 @@ pub(super) fn format_sync_error(e: &Error) -> String {
         // 其它：网络超时、Drive 5xx、refresh 端点 5xx 等。
         // 后台 30s tick 会自动重试，UI 不必催用户重新登录。
         _ => ERR_PREFIX_TRANSIENT,
-    };
-    format!("{prefix}{e}")
+    }
 }
 
-/// 包一次 Drive 调用：如果返回 401，强制刷新 access_token 后重试一次。
+/// The prefix followed by the full error text, for `status.last_error`. The
+/// frontend reads the prefix to decide whether to offer signing in again.
+pub(super) fn format_sync_error(e: &Error) -> String {
+    format!("{}{e}", sync_error_prefix(e))
+}
+
+/// Every Drive call the sync engine makes goes through here. It runs `op` once
+/// with the current access token and returns whatever `op` returns. If Google
+/// answers 401, it refreshes the token and runs `op` once more, returning that
+/// second result.
 ///
-/// 原因：`auth::ensure_valid_token` 只看本地 `expires_at`，但 Google 端可能
-/// 因机器睡眠醒来 / 时钟漂移 / 服务端轮换在到期前就拒收 access_token。
-/// 此时单纯刷一次 token 就能恢复，不应让用户重新登录整个 OAuth 流程。
+/// The new token is written back to `token`, so the caller's later Drive calls
+/// use it too.
+///
+/// One retry only. If the refresh itself fails, that error is returned and `op`
+/// is not run again.
+///
+/// Why this layer exists: `ensure_valid_token` only checks the expiry time
+/// stored locally, and Google can reject a token before that (wake from sleep,
+/// clock drift, rotation on Google's side). One refresh fixes it; the user
+/// should not have to sign in again.
 pub(super) async fn with_token_retry<F, Fut, T>(
     pool: &DbPool,
     token: &mut TokenInfo,
@@ -73,8 +89,8 @@ where
             stage,
             body,
         }) => {
-            log::info!("drive {stage} 返回 401，强制刷新 access_token 后重试");
-            log::debug!("drive 401 body: {body}");
+            log::info!("drive {stage}: 401, refreshing the access token and retrying once");
+            log::debug!("drive {stage}: 401 body: {body}");
             *token = auth::force_refresh(pool).await?;
             op(token.access_token.clone()).await
         }

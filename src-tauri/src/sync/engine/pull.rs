@@ -7,7 +7,7 @@ use std::sync::Arc;
 use serde_json::Value;
 
 use super::io;
-use super::{format_sync_error, with_token_retry, Inner};
+use super::{format_sync_error, sync_error_prefix, with_token_retry, Inner};
 use crate::capture::ignore::{is_excluded, IgnoreRule};
 use crate::error::{Error, Result};
 use crate::storage::{utc_now_rfc3339, DbPool, SqliteResultExt};
@@ -152,16 +152,22 @@ fn parse_filename(name: &str) -> Option<ParsedFile> {
 }
 
 pub(super) async fn flush_pull(inner: &Arc<Inner>) -> Result<()> {
-    // 串行门：与 flush_push / purge 类命令互斥（详见 Inner::flush_gate）。
+    // Acquire the sync mutex (RAII): ensures only one pull/push runs at a time
+    // and prevents concurrent conflicts with purge operations.
+    // `_gate` holds the lock until `flush_pull` exits and drops it.
     let _gate = inner.flush_gate.lock().await;
     let mut token: TokenInfo = match auth::ensure_valid_token(&inner.pool).await {
         Ok(t) => t,
         Err(Error::NotSignedIn) => return Ok(()),
         Err(e) => {
-            // 同 push.rs 同名分支：warn 只写概述，detail 走 debug，避免 OAuth body
-            // 里的 PII 落进 info 级日志文件；status 走 [CRED_EXPIRED]/[TRANSIENT] 分类
-            log::warn!("sync pull 拿不到有效 token（详情见 status）");
-            log::debug!("token error detail: {e}");
+            // warn carries the error's class but not its text, and the detail goes to
+            // debug: only info and above is printed by default, so start with
+            // RUST_LOG=hindsight=debug to see it. What the user sees goes through status.
+            log::warn!(
+                "sync pull: no valid token {}(see status)",
+                sync_error_prefix(&e)
+            );
+            log::debug!("sync pull: token error: {e}");
             inner.status.write().await.last_error = Some(format_sync_error(&e));
             return Ok(());
         }
@@ -171,7 +177,7 @@ pub(super) async fn flush_pull(inner: &Arc<Inner>) -> Result<()> {
     let cursor_q = if cursor.starts_with("1970-") {
         String::new()
     } else {
-        cursor.clone()
+        cursor
     };
 
     let files = with_token_retry(&inner.pool, &mut token, |tok| {
