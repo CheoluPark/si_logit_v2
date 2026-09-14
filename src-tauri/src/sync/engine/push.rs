@@ -7,14 +7,13 @@ use std::sync::Arc;
 use serde_json::Value;
 
 use super::io::{self, OutboxRow};
-use super::{format_sync_error, with_token_retry, Inner};
+use super::{format_sync_error, sync_error_prefix, with_token_retry, Inner};
 use crate::error::{Error, Result};
-use crate::repo::sql::FROM_MEMBER_GROUP;
 use crate::storage::{utc_now_rfc3339, DbPool, SqliteResultExt};
 use crate::sync::auth::{self, TokenInfo};
 use crate::sync::payload::{
-    ActivityPayload, AppCategoryPayload, AppGroupMemberPayload, AppGroupPayload, AppIconPayload,
-    CategoryPayload, DeviceMetaPayload, ProcessPathPayload,
+    ActivityPayload, AppGroupMemberPayload, AppGroupPayload, AppIconPayload, CategoryPayload,
+    DeviceMetaPayload, ProcessPathPayload,
 };
 
 const PUSH_BATCH_SIZE: usize = 200;
@@ -24,7 +23,6 @@ const PUSH_BATCH_SIZE: usize = 200;
 enum DirtyKey {
     ActivityDay(String), // local_date
     Categories,
-    AppCategories,
     ProcessPaths,
     DeviceMeta,
     AppIcons,
@@ -45,16 +43,34 @@ pub(super) async fn flush_push(inner: &Arc<Inner>) -> Result<()> {
             return Ok(());
         }
         Err(e) => {
-            // 默认日志级别只记概述：避免把 OAuth body / 错误链里可能携带的
-            // 用户邮箱 / account id / OAuth body 落到日志文件；
-            // 错误分类后的 status 字符串已经带 [CRED_EXPIRED] / [TRANSIENT] 前缀，
-            // UI 可读且不含原始 raw。排查时用 RUST_LOG=hindsight=debug 看 detail
-            log::warn!("sync push 拿不到有效 token（详情见 status）");
-            log::debug!("token error detail: {e}");
+            // warn carries the error's class but not its text, and the detail goes to
+            // debug: only info and above is printed by default, so start with
+            // RUST_LOG=hindsight=debug to see it. What the user sees goes through status.
+            log::warn!(
+                "sync push: no valid token {}(see status)",
+                sync_error_prefix(&e)
+            );
+            log::debug!("sync push: token error: {e}");
             inner.status.write().await.last_error = Some(format_sync_error(&e));
             return Ok(());
         }
     };
+
+    // TODO(ADR-0004): remove once active devices have upgraded past the release
+    // that stopped publishing app_categories.json.
+    if !inner
+        .legacy_app_categories_checked
+        .load(std::sync::atomic::Ordering::SeqCst)
+    {
+        match delete_legacy_app_categories_file(inner, &mut token).await {
+            Ok(()) => inner
+                .legacy_app_categories_checked
+                .store(true, std::sync::atomic::Ordering::SeqCst),
+            Err(e) => {
+                log::warn!("push: old app_categories file not removed, retrying next tick: {e}")
+            }
+        }
+    }
 
     // 可选上云数据集(AI 总结/聊天历史/屏幕记忆):水位线检测,与 outbox 无关,
     // 放在 outbox 早退之前保证每轮 push tick 都有机会跑到。
@@ -73,20 +89,11 @@ pub(super) async fn flush_push(inner: &Arc<Inner>) -> Result<()> {
     }
 
     // 把 outbox 行分组到"脏文件"
-    let (mut groups, ungroupable_ids) = group_outbox(&rows);
+    let (groups, ungroupable_ids) = group_outbox(&rows);
     // 没法分组的行（entity 未知 / payload 损坏）立刻 drop：它们永远不可能发出去，
     // 留着会每 30s 重读一次、占 batch 名额、把 pending 计数永久顶高
     if !ungroupable_ids.is_empty() {
         io::delete_outbox_rows(&inner.pool, &ungroupable_ids).await?;
-    }
-    // app_categories.json is derived from app_groups + app_group_members (see
-    // build_app_categories), so a change to either dirties it too. Empty id list
-    // on purpose: sharing row ids across keys would let one key's success delete
-    // rows another key still needs to retry. Cost: a failed upload of the derived
-    // file waits for the next group change instead of retrying on its own.
-    if groups.contains_key(&DirtyKey::AppGroups) || groups.contains_key(&DirtyKey::AppGroupMembers)
-    {
-        groups.entry(DirtyKey::AppCategories).or_default();
     }
     if groups.is_empty() {
         return Ok(());
@@ -154,6 +161,38 @@ pub(super) async fn flush_push(inner: &Arc<Inner>) -> Result<()> {
     Ok(())
 }
 
+/// Deletes this device's `app_categories.json` from the cloud. Versions before
+/// this one published it; nothing reads it any more, and it keeps process names
+/// the user may since have removed. Only this device's copy is touched: every
+/// device cleans up its own file once it upgrades.
+///
+/// TODO(ADR-0004): remove once active devices have upgraded.
+async fn delete_legacy_app_categories_file(
+    inner: &Arc<Inner>,
+    token: &mut TokenInfo,
+) -> Result<()> {
+    if inner.self_id.is_empty() {
+        return Ok(());
+    }
+    let name = format!("device.{}.app_categories.json", inner.self_id);
+    let files = with_token_retry(&inner.pool, token, |tok| {
+        let drive = &inner.drive;
+        async move { drive.list_appdata_files(&tok, "").await }
+    })
+    .await?;
+    let Some(file) = files.into_iter().find(|f| f.name == name) else {
+        return Ok(());
+    };
+    with_token_retry(&inner.pool, token, |tok| {
+        let drive = &inner.drive;
+        let id = file.id.clone();
+        async move { drive.delete(&tok, &id).await }
+    })
+    .await?;
+    log::info!("push: removed {name} from the cloud");
+    Ok(())
+}
+
 /// 返回 (可分组的脏文件映射, 没法分组必须直接 drop 的行 id)。
 /// 没法分组的行如果不删，会在每个 batch 里既进不了 succeeded 也进不了 failed，
 /// 永远留在 outbox（读取按 id ASC，它们还总排在最前面）。
@@ -177,7 +216,6 @@ fn group_outbox(rows: &[OutboxRow]) -> (HashMap<DirtyKey, Vec<i64>>, Vec<i64>) {
                 }
             },
             "category" => DirtyKey::Categories,
-            "app_category" => DirtyKey::AppCategories,
             "process_path" => DirtyKey::ProcessPaths,
             "device" => DirtyKey::DeviceMeta,
             "app_icon" => DirtyKey::AppIcons,
@@ -198,7 +236,6 @@ fn file_name_for(self_id: &str, key: &DirtyKey) -> String {
     match key {
         DirtyKey::ActivityDay(day) => format!("device.{self_id}.activities.{day}.ndjson"),
         DirtyKey::Categories => format!("device.{self_id}.categories.json"),
-        DirtyKey::AppCategories => format!("device.{self_id}.app_categories.json"),
         DirtyKey::ProcessPaths => format!("device.{self_id}.process_paths.json"),
         DirtyKey::DeviceMeta => format!("device.{self_id}.meta.json"),
         DirtyKey::AppIcons => format!("device.{self_id}.icons.json"),
@@ -211,7 +248,6 @@ async fn build_content(pool: &DbPool, self_id: &str, key: &DirtyKey) -> Result<V
     match key {
         DirtyKey::ActivityDay(day) => build_activities_day(pool, self_id, day).await,
         DirtyKey::Categories => build_categories(pool).await,
-        DirtyKey::AppCategories => build_app_categories(pool).await,
         DirtyKey::ProcessPaths => build_process_paths(pool).await,
         DirtyKey::DeviceMeta => build_device_meta(pool, self_id).await,
         DirtyKey::AppIcons => build_app_icons(pool).await,
@@ -275,8 +311,8 @@ async fn build_activities_day(pool: &DbPool, self_id: &str, day: &str) -> Result
 
 /// 把一张表全量 SELECT 出来 → 每行映射成 `T` → 整体序列化成 JSON 字节。
 ///
-/// 6 个共享表 (categories / app_categories / process_paths / app_icons /
-/// app_groups / app_group_members) 的 build_* 函数都是这一模板的实例化。
+/// 5 个共享表 (categories / process_paths / app_icons / app_groups /
+/// app_group_members) 的 build_* 函数都是这一模板的实例化。
 async fn build_table_rows<T, F>(pool: &DbPool, sql: &str, map: F) -> Result<Vec<u8>>
 where
     T: serde::Serialize + Send + 'static,
@@ -314,39 +350,6 @@ async fn build_categories(pool: &DbPool) -> Result<Vec<u8>> {
                 sort_order: r.get(5)?,
                 updated_at: r.get(6)?,
                 deleted_at: r.get(7)?,
-            })
-        },
-    )
-    .await
-}
-
-/// Derived from [`FROM_MEMBER_GROUP`]; the local `app_categories` table is no
-/// longer maintained. Still emitted so peers on older builds keep receiving
-/// `process → category`. Live row when the group has a category; tombstone when
-/// member/group is soft-deleted or the group has none. `updated_at = MAX(both)`
-/// so a change on either side wins LWW on the peer.
-async fn build_app_categories(pool: &DbPool) -> Result<Vec<u8>> {
-    build_table_rows(
-        pool,
-        &format!(
-            "SELECT gm.process_name,
-                    COALESCE(g.category_id, 'other')                 AS category_id,
-                    MAX(gm.updated_at, g.updated_at)                 AS updated_at,
-                    CASE
-                      WHEN gm.deleted_at IS NOT NULL THEN gm.deleted_at
-                      WHEN g.deleted_at  IS NOT NULL THEN g.deleted_at
-                      WHEN g.category_id IS NULL     THEN MAX(gm.updated_at, g.updated_at)
-                      ELSE NULL
-                    END                                              AS deleted_at
-             {FROM_MEMBER_GROUP}
-             ORDER BY gm.process_name"
-        ),
-        |r| {
-            Ok(AppCategoryPayload {
-                process_name: r.get(0)?,
-                category_id: r.get(1)?,
-                updated_at: r.get(2)?,
-                deleted_at: r.get(3)?,
             })
         },
     )
@@ -651,7 +654,7 @@ mod tests {
         assert_eq!(
             meta.os.as_deref(),
             Some("macos"),
-            "os 必须导出 —— 对端的 app_categories/process_paths 过滤全靠它"
+            "os 必须导出 —— 对端的 process_paths 过滤全靠它"
         );
         assert_eq!(meta.last_seen_at.as_deref(), Some("2026-07-01T08:00:00Z"));
         assert_eq!(meta.updated_at, "2026-07-02T09:00:00Z");

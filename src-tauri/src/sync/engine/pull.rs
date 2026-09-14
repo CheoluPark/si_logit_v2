@@ -7,7 +7,7 @@ use std::sync::Arc;
 use serde_json::Value;
 
 use super::io;
-use super::{format_sync_error, with_token_retry, Inner};
+use super::{format_sync_error, sync_error_prefix, with_token_retry, Inner};
 use crate::capture::ignore::{is_excluded, IgnoreRule};
 use crate::error::{Error, Result};
 use crate::storage::{utc_now_rfc3339, DbPool, SqliteResultExt};
@@ -152,16 +152,22 @@ fn parse_filename(name: &str) -> Option<ParsedFile> {
 }
 
 pub(super) async fn flush_pull(inner: &Arc<Inner>) -> Result<()> {
-    // 串行门：与 flush_push / purge 类命令互斥（详见 Inner::flush_gate）。
+    // Acquire the sync mutex (RAII): ensures only one pull/push runs at a time
+    // and prevents concurrent conflicts with purge operations.
+    // `_gate` holds the lock until `flush_pull` exits and drops it.
     let _gate = inner.flush_gate.lock().await;
     let mut token: TokenInfo = match auth::ensure_valid_token(&inner.pool).await {
         Ok(t) => t,
         Err(Error::NotSignedIn) => return Ok(()),
         Err(e) => {
-            // 同 push.rs 同名分支：warn 只写概述，detail 走 debug，避免 OAuth body
-            // 里的 PII 落进 info 级日志文件；status 走 [CRED_EXPIRED]/[TRANSIENT] 分类
-            log::warn!("sync pull 拿不到有效 token（详情见 status）");
-            log::debug!("token error detail: {e}");
+            // warn carries the error's class but not its text, and the detail goes to
+            // debug: only info and above is printed by default, so start with
+            // RUST_LOG=hindsight=debug to see it. What the user sees goes through status.
+            log::warn!(
+                "sync pull: no valid token {}(see status)",
+                sync_error_prefix(&e)
+            );
+            log::debug!("sync pull: token error: {e}");
             inner.status.write().await.last_error = Some(format_sync_error(&e));
             return Ok(());
         }
@@ -171,7 +177,7 @@ pub(super) async fn flush_pull(inner: &Arc<Inner>) -> Result<()> {
     let cursor_q = if cursor.starts_with("1970-") {
         String::new()
     } else {
-        cursor.clone()
+        cursor
     };
 
     let files = with_token_retry(&inner.pool, &mut token, |tok| {
@@ -258,7 +264,7 @@ pub(super) async fn flush_pull(inner: &Arc<Inner>) -> Result<()> {
     // Pass 2: 其余类型；对平台特定的两类做 OS 过滤。
     //
     // FK 依赖排序:同一批内「被引用方」(categories / app_groups)必须先于
-    // 「引用方」(app_categories / app_group_members)合并——push 端 dirty 文件按
+    // 「引用方」(app_group_members)合并——push 端 dirty 文件按
     // HashMap 随机序上传,若子表文件的 modifiedTime 恰好在前,行级 INSERT 会撞
     // FOREIGN KEY 失败,被 merge_lww_simple 单行降级跳过,而游标照常越过该文件,
     // 该行从此永不再被拉取(同 tick「新建分类 + 给应用归类」约一半概率踩中,
@@ -338,7 +344,7 @@ pub(super) async fn flush_pull(inner: &Arc<Inner>) -> Result<()> {
             continue;
         }
 
-        // app_categories / process_paths 是平台特定的：
+        // process_paths 是平台特定的：
         //   Windows tracker 写 process_name = "chrome.exe"，exe_path = "C:\\..."
         //   macOS tracker  写 process_name = "Google Chrome"，exe_path = "/Applications/.../MacOS/..."
         // 跨 OS 合并要么完全无用（key 对不上），要么坏事（同名 key 撞车，把本机能用的路径覆盖掉，icon 提取失败）。
@@ -358,9 +364,9 @@ pub(super) async fn flush_pull(inner: &Arc<Inner>) -> Result<()> {
                 }
                 Some(_) => {} // 同 OS：正常处理
                 // OS 未知：多半是对端的 meta 文件还没到（push 是 HashMap 随机序，
-                // app_categories 可能先落 Drive）。**不标 handled**——让游标停在
+                // process_paths 可能先落 Drive）。**不标 handled**——让游标停在
                 // 这里，下轮 meta 到了再处理；标了 handled 游标越过后（list 用严格
-                // `modifiedTime >`）这份文件永远不会再被拉，同 OS 对端的归类数据
+                // `modifiedTime >`）这份文件永远不会再被拉，同 OS 对端的进程路径
                 // 就永久缺失。
                 None => {
                     log::debug!(

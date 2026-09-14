@@ -770,9 +770,6 @@ async fn push_transient_failure_keeps_outbox_then_recovers() {
 /// A 端各表插一行 + 手工入 outbox（category / process_path / device / app_icon /
 /// app_group / app_group_member 六类）→ A sync 推文件 → B sync 拉回 → B 各表
 /// 字段逐一与 A 写入值相等。
-/// 第七个文件 app_categories 是单向的：本机不再维护那张表，push 仍从「成员 ⋈ 组」
-/// 现算一份发给旧版本对端，pull 侧则完全不看它。这里两头都钉死——文件必须还在，
-/// B 的表必须是空的。
 /// 一条测试同时吃掉 push 构建侧的 build_* 与 pull 合并侧对应的 merge_*。
 // env 锁横跨整个测试(B merge app_icon 会写 icon 文件 cache,路径读
 // HINDSIGHT_DATA_DIR);#[tokio::test] 是单线程 runtime,持锁跨 await 不自死锁。
@@ -797,7 +794,7 @@ async fn metadata_seven_entities_cross_device_roundtrip() {
     const T_MEMBER: &str = "2026-07-01T00:00:08Z";
     let icon_bytes: Vec<u8> = vec![0x89, 0x50, 0x4E, 0x47, 1, 2, 3, 4];
 
-    // A 本机 OS —— meta 先到 B 才能解锁 app_categories / process_paths 的 OS 过滤
+    // A 本机 OS —— meta 先到 B 才能解锁 process_paths 的 OS 过滤
     let os = crate::platform::local_os_id().to_string();
 
     let os_ins = os.clone();
@@ -868,8 +865,8 @@ async fn metadata_seven_entities_cross_device_roundtrip() {
     assert_eq!(outbox_count(&a.pool).await, 0, "A 推完 outbox 应清空");
     assert_eq!(
         drive.list_appdata_files("").await.unwrap().len(),
-        7,
-        "6 类 entity 各一个文件,外加派生的 app_categories 文件(给旧版本对端)"
+        6,
+        "6 类 entity 各一个文件"
     );
 
     b.engine.sync_now().await.expect("B sync 应成功");
@@ -887,14 +884,13 @@ async fn metadata_seven_entities_cross_device_roundtrip() {
         Option<String>,
     );
     #[allow(clippy::type_complexity)]
-    let (cat, pp, dev, icon, grp, member, ac_rows): (
+    let (cat, pp, dev, icon, grp, member): (
         CatRow,
         (String, String, String),
         DevRow,
         (Vec<u8>, String, Option<String>),
         (String, Option<String>, String, Option<String>),
         (String, String, Option<String>),
-        i64,
     ) = b
         .pool
         .0
@@ -968,10 +964,7 @@ async fn metadata_seven_entities_cross_device_roundtrip() {
                     |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
                 )
                 .db()?;
-            let ac_rows: i64 = conn
-                .query_row("SELECT COUNT(*) FROM app_categories", [], |r| r.get(0))
-                .db()?;
-            Ok((cat, pp, dev, icon, grp, member, ac_rows))
+            Ok((cat, pp, dev, icon, grp, member))
         })
         .await
         .unwrap();
@@ -1027,12 +1020,48 @@ async fn metadata_seven_entities_cross_device_roundtrip() {
         ("grp-e2e".into(), T_MEMBER.into(), None),
         "app_group_members 行应逐字段一致"
     );
-    // 上面断言过 A 确实推了 app_categories 文件,这里断言 B 拉完之后一行都没进。
-    // 两条合起来才是「只发不收」:少任何一条都会让停发或者停收悄悄回归。
-    assert_eq!(ac_rows, 0, "app_categories 文件不应再被合并进本机");
 
     // pull 不回灌:B 侧合并远端数据不应产生任何 outbox 行(否则会推回死循环)
     assert_eq!(outbox_count(&b.pool).await, 0, "B pull 后 outbox 应仍为空");
+}
+
+/// ADR-0004: a device that upgrades from a version which still published
+/// `app_categories.json` deletes its own copy on the first push after launch.
+/// Other devices' copies stay: each device cleans up its own once it upgrades.
+#[tokio::test]
+async fn first_push_deletes_own_legacy_app_categories_file() {
+    let drive = Arc::new(InMemoryDriveStore::new());
+    let a = make_device("device-a", drive.clone()).await;
+    drive
+        .upsert_by_name("device.device-a.app_categories.json", b"[]")
+        .await
+        .unwrap();
+    drive
+        .upsert_by_name("device.device-b.app_categories.json", b"[]")
+        .await
+        .unwrap();
+
+    a.engine.sync_now().await.expect("A sync 应成功");
+
+    let names: Vec<String> = drive
+        .list_appdata_files("")
+        .await
+        .unwrap()
+        .into_iter()
+        .map(|f| f.name)
+        .collect();
+    assert!(
+        !names
+            .iter()
+            .any(|n| n == "device.device-a.app_categories.json"),
+        "本机那份 app_categories 文件应被删掉(现有:{names:?})"
+    );
+    assert!(
+        names
+            .iter()
+            .any(|n| n == "device.device-b.app_categories.json"),
+        "别的设备那份不能动(现有:{names:?})"
+    );
 }
 
 /// 任务 7：OS 过滤 + 游标 stall 三段式。

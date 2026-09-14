@@ -55,7 +55,7 @@ pub async fn get_storage_info(pool: State<'_, DbPool>) -> Result<StorageInfo, St
 }
 
 /// 清空**本机**所有捕获 / 派生数据（不动云端 Drive，不动其它用户自定义：settings /
-/// categories / app_categories / devices / auth_state）。
+/// categories / devices / auth_state）。
 ///
 /// **清的表**（7 张硬删 + 2 张软删 + 1 个 cursor 重置）：
 /// - `activities` —— 焦点会话原始流水
