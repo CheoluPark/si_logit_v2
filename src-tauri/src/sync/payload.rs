@@ -32,16 +32,6 @@ pub struct CategoryPayload {
     pub deleted_at: Option<String>,
 }
 
-/// app_categories 行的 JSON 形式（process_name → category_id 的 derived view）。
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct AppCategoryPayload {
-    pub process_name: String,
-    pub category_id: String,
-    pub updated_at: String,
-    pub deleted_at: Option<String>,
-}
-
 /// process_paths 行的 JSON 形式（process_name → exe 路径），跨设备同步本机 exe 位置。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
