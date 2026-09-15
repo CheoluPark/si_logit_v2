@@ -88,7 +88,7 @@ pub fn ensure_loaded() -> io::Result<&'static DeviceMeta> {
 fn generate_default() -> DeviceMeta {
     DeviceMeta {
         device_id: Uuid::new_v4().to_string(),
-        display_name: "本机".into(),
+        display_name: "MY_PC".into(),
         color: default_color(),
         icon: default_icon(),
         os: crate::platform::local_os_id().into(),
@@ -265,6 +265,7 @@ mod tests {
         chrono::DateTime::parse_from_rfc3339(&a.created_at)
             .expect("created_at 必须是 RFC3339 时间戳");
         assert!(!a.display_name.is_empty(), "新设备必须有默认展示名");
+        assert_eq!(a.display_name, "MY_PC", "新设备默认展示名必须是 MY_PC");
         assert!(!a.os.is_empty(), "os 字段用于跨端图标区分，不能为空");
     }
 

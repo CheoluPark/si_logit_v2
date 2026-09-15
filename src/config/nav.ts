@@ -4,6 +4,8 @@ import {
   MessageSquare,
   Settings,
   LayoutGrid,
+  ChartGantt,
+  ClipboardList,
 } from "lucide-react";
 import { CalendarTodayIcon } from "../components/icons/CalendarTodayIcon";
 import { CalendarWeekIcon } from "../components/icons/CalendarWeekIcon";
@@ -12,6 +14,7 @@ import { AiSettingsIcon } from "../components/icons/AiSettingsIcon";
 import type { NavItem } from "../types/nav";
 
 export const ROUTES = {
+  timeline: "/timeline",
   today: "/",
   week: "/week",
   month: "/month",
@@ -22,11 +25,13 @@ export const ROUTES = {
   categories: "/categories",
   /** 旧的独立「应用」页;现已并入 /categories 的 tab,这里只留给重定向用 */
   apps: "/apps",
+  worklog: "/worklog",
   settings: "/settings",
 } as const;
 
 // 注：label 已改为 labelKey（i18n 翻译键），渲染时由组件通过 t() 解析
 export const NAV_ITEMS: NavItem[] = [
+  { path: ROUTES.timeline,   labelKey: "nav.items.timeline",   icon: ChartGantt,        group: "primary", color: "#14b8a6"},
   { path: ROUTES.today,      labelKey: "nav.items.today",      icon: CalendarTodayIcon, group: "primary", color: "#f97316", end: true },
   { path: ROUTES.week,       labelKey: "nav.items.week",       icon: CalendarWeekIcon,  group: "primary", color: "#3b82f6" },
   { path: ROUTES.month,      labelKey: "nav.items.month",      icon: CalendarMonthIcon, group: "primary", color: "#8b5cf6" },
@@ -35,6 +40,7 @@ export const NAV_ITEMS: NavItem[] = [
   { path: ROUTES.chat,       labelKey: "nav.items.chat",       icon: MessageSquare,     group: "ai",      color: "#ec4899" },
   { path: ROUTES.aiSummary,  labelKey: "nav.items.aiSummary",  icon: Sparkles,          group: "ai",      color: "#d946ef", excludePaths: [ROUTES.aiSettings] },
   { path: ROUTES.aiSettings, labelKey: "nav.items.aiSettings", icon: AiSettingsIcon,    group: "ai",      color: "#a855f7" },
+  { path: ROUTES.worklog,    labelKey: "nav.items.worklog",    icon: ClipboardList,     group: "ai",      color: "#14b8a6" },
   { path: ROUTES.categories, labelKey: "nav.items.categories", icon: LayoutGrid,        group: "data",    color: "#0ea5e9" },
   { path: ROUTES.devices,    labelKey: "nav.items.devices",    icon: Cloud,             group: "data",    color: "#10b981" },
   { path: ROUTES.settings,   labelKey: "nav.items.settings",   icon: Settings,          group: "system",  color: "#64748b" },

@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTD/PropertyList-1.0.dtd">
 <!--
-  Hindsight macOS Info.plist 增量。
+  SI Logit macOS Info.plist 增量。
   tauri-bundler 自动把这个文件 merge 进生成的 Info.plist —— 只放需要新增 / 覆盖的 key。
 
   NSAppleEventsUsageDescription：第一次 osascript 控制 Chrome / Safari 时弹出
@@ -15,8 +15,8 @@
 <plist version="1.0">
 <dict>
     <key>NSAppleEventsUsageDescription</key>
-    <string>Hindsight needs to read the current tab URL from your browser to apply privacy filters (skip screenshots on banking / login pages). URLs are evaluated locally and never leave your device.</string>
+    <string>SI Logit needs to read the current tab URL from your browser to apply privacy filters (skip screenshots on banking / login pages). URLs are evaluated locally and never leave your device.</string>
     <key>NSScreenCaptureUsageDescription</key>
-    <string>Hindsight captures your focused app window so the local AI can summarize what you've been working on. Screenshots stay on your device and are never uploaded.</string>
+    <string>SI Logit captures your focused app window so the local AI can summarize what you've been working on. Screenshots stay on your device and are never uploaded.</string>
 </dict>
 </plist>

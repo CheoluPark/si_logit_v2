@@ -461,7 +461,7 @@ mod tests {
             sheets: vec![
                 SheetSpec {
                     name: "概览".into(),
-                    title: Some("Hindsight 使用统计".into()),
+                    title: Some("SI Logit 使用统计".into()),
                     table: false,
                     hide_gridlines: true,
                     freeze_rows: 0,

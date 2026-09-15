@@ -3,7 +3,7 @@
 //! 每个 `<scope>_<dim>` 函数（`day_hours` / `day_apps` / `week_days` / ...）输出固定
 //! 形状的 Vec，前端拿到直接渲染。所有查询走 [`DeviceFilter`] 控制单设备 vs 全设备聚合。
 
-use chrono::{DateTime, Datelike, Duration, Local, NaiveDate, TimeZone, Timelike};
+use chrono::{DateTime, Datelike, Duration, Local, NaiveDate, TimeZone, Timelike, Utc};
 use rusqlite::{OptionalExtension, ToSql};
 use serde::Serialize;
 
@@ -134,6 +134,296 @@ pub fn device_filter_from_option(id: Option<String>) -> DeviceFilter {
         Some(s) if s.trim().is_empty() => DeviceFilter::All,
         Some(s) => DeviceFilter::Only(s),
     }
+}
+
+/// 一个本地日期内的原始活动会话，供 Timeline 按时间轴绘制。
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TimelineSession {
+    pub started_at: String,
+    pub ended_at: String,
+    pub category_id: String,
+}
+
+/// 拉指定本地日期的原始活动会话，不做时长或分类聚合。
+pub async fn timeline_sessions(
+    pool: &DbPool,
+    local_date: NaiveDate,
+    device: DeviceFilter,
+) -> Result<Vec<TimelineSession>> {
+    let day_start = Local
+        .from_local_datetime(
+            &local_date
+                .and_hms_opt(0, 0, 0)
+                .expect("NaiveDate midnight should be valid"),
+        )
+        .earliest()
+        .expect("local day start should exist");
+    let day_end_date = local_date + Duration::days(1);
+    let day_end = Local
+        .from_local_datetime(
+            &day_end_date
+                .and_hms_opt(0, 0, 0)
+                .expect("NaiveDate midnight should be valid"),
+        )
+        .latest()
+        .expect("local day end should exist");
+    let day_start = day_start.to_rfc3339();
+    let day_end = day_end.to_rfc3339();
+    let rows = pool
+        .0
+        .call(move |conn| {
+            let sql = format!(
+                "SELECT a.started_at, a.ended_at, COALESCE(c.id, 'other') AS cat
+                 {FROM_ACTIVITY_GROUP_CATEGORY}
+                 WHERE julianday(a.started_at) < julianday(?)
+                   AND julianday(a.ended_at) > julianday(?) {}
+                   AND g.category_id IS NOT 'hidden'
+                   AND a.excluded = 0
+                 ORDER BY julianday(a.started_at), julianday(a.ended_at), a.id",
+                device.sql_clause()
+            );
+            let mut params: Vec<&dyn ToSql> = Vec::new();
+            params.push(&day_end);
+            params.push(&day_start);
+            if let Some(extra) = device.extra_param() {
+                params.push(extra);
+            }
+            let mut stmt = conn.prepare(&sql).db()?;
+            let it = stmt
+                .query_map(params.as_slice(), |r| {
+                    Ok(TimelineSession {
+                        started_at: r.get(0)?,
+                        ended_at: r.get(1)?,
+                        category_id: r.get(2)?,
+                    })
+                })
+                .db()?;
+            let mut out = Vec::new();
+            for row in it {
+                out.push(row.db()?);
+            }
+            Ok(out)
+        })
+        .await?;
+    Ok(rows)
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TimelineAppUsage {
+    pub process: String,
+    pub icon_process: String,
+    pub secs: u64,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TimelineBlockDetail {
+    pub apps: Vec<TimelineAppUsage>,
+    pub titles: Vec<TitleUsage>,
+}
+
+type TimelineDetailRow = (String, String, String, Option<String>, String, String);
+
+async fn timeline_detail_rows(
+    pool: &DbPool,
+    from: DateTime<Utc>,
+    to: DateTime<Utc>,
+    super_category_id: String,
+    group_key: Option<String>,
+    device: DeviceFilter,
+) -> Result<Vec<TimelineDetailRow>> {
+    let from_param = from.to_rfc3339();
+    let to_param = to.to_rfc3339();
+    pool.0
+        .call(move |conn| {
+            let group_clause = if group_key.is_some() {
+                " AND COALESCE(g.id, a.process_name) = ?"
+            } else {
+                ""
+            };
+            let sql = format!(
+                "SELECT COALESCE(g.display_name, a.process_name), a.process_name,
+                        COALESCE(a.window_title, ''), a.url_host,
+                        a.started_at, a.ended_at
+                 {FROM_ACTIVITY_GROUP_CATEGORY}
+                 WHERE julianday(a.started_at) < julianday(?)
+                   AND julianday(a.ended_at) > julianday(?)
+                   AND c.super_category_id = ?
+                   AND g.category_id IS NOT 'hidden'
+                   AND a.excluded = 0{} {}
+                 ORDER BY julianday(a.started_at), julianday(a.ended_at), a.id",
+                group_clause,
+                device.sql_clause()
+            );
+            let mut params: Vec<&dyn ToSql> = Vec::new();
+            params.push(&to_param);
+            params.push(&from_param);
+            params.push(&super_category_id);
+            if let Some(group_key) = group_key.as_ref() {
+                params.push(group_key);
+            }
+            if let Some(extra) = device.extra_param() {
+                params.push(extra);
+            }
+            let mut stmt = conn.prepare(&sql).db()?;
+            let it = stmt
+                .query_map(params.as_slice(), |r| {
+                    Ok((
+                        r.get(0)?,
+                        r.get(1)?,
+                        r.get(2)?,
+                        r.get(3)?,
+                        r.get(4)?,
+                        r.get(5)?,
+                    ))
+                })
+                .db()?;
+            let mut out = Vec::new();
+            for row in it {
+                out.push(row.db()?);
+            }
+            Ok(out)
+        })
+        .await
+        .map_err(Into::into)
+}
+
+fn aggregate_timeline_detail(
+    rows: Vec<TimelineDetailRow>,
+    from: DateTime<Utc>,
+    to: DateTime<Utc>,
+) -> TimelineBlockDetail {
+    let mut app_secs: std::collections::HashMap<String, (String, u64)> =
+        std::collections::HashMap::new();
+    let mut title_secs: std::collections::HashMap<(String, Option<String>), u64> =
+        std::collections::HashMap::new();
+    for (process, raw_process, title, host, started_at, ended_at) in rows {
+        let Ok(started_at) = DateTime::parse_from_rfc3339(&started_at) else {
+            continue;
+        };
+        let Ok(ended_at) = DateTime::parse_from_rfc3339(&ended_at) else {
+            continue;
+        };
+        let overlap_start = started_at.with_timezone(&Utc).max(from);
+        let overlap_end = ended_at.with_timezone(&Utc).min(to);
+        let secs = (overlap_end - overlap_start).num_seconds();
+        if secs <= 0 {
+            continue;
+        }
+        let secs = secs as u64;
+        let entry = app_secs.entry(process).or_insert((raw_process.clone(), 0));
+        if raw_process < entry.0 {
+            entry.0 = raw_process;
+        }
+        entry.1 += secs;
+        *title_secs.entry((title, host)).or_insert(0) += secs;
+    }
+
+    let mut apps: Vec<TimelineAppUsage> = app_secs
+        .into_iter()
+        .map(|(process, (icon_process, secs))| TimelineAppUsage {
+            process,
+            icon_process,
+            secs,
+        })
+        .collect();
+    apps.sort_by(|a, b| {
+        b.secs
+            .cmp(&a.secs)
+            .then_with(|| a.process.cmp(&b.process))
+    });
+
+    let mut titles: Vec<TitleUsage> = title_secs
+        .into_iter()
+        .map(|((title, host), secs)| TitleUsage {
+            title,
+            secs: secs as u32,
+            host,
+        })
+        .collect();
+    titles.sort_by(|a, b| {
+        b.secs
+            .cmp(&a.secs)
+            .then_with(|| a.title.cmp(&b.title))
+            .then_with(|| a.host.cmp(&b.host))
+    });
+
+    TimelineBlockDetail { apps, titles }
+}
+
+/// 拉指定 Timeline 区间内、某个大类下的应用和窗口标题明细。
+/// 区间为半开 `[from, to)`；每条活动只计入与该区间的实际重叠秒数。
+pub async fn timeline_block_detail(
+    pool: &DbPool,
+    from: DateTime<Local>,
+    to: DateTime<Local>,
+    super_category_id: String,
+    device: DeviceFilter,
+) -> Result<TimelineBlockDetail> {
+    let from = from.with_timezone(&Utc);
+    let to = to.with_timezone(&Utc);
+    if from >= to {
+        return Ok(TimelineBlockDetail {
+            apps: Vec::new(),
+            titles: Vec::new(),
+        });
+    }
+    let rows = timeline_detail_rows(
+        pool,
+        from,
+        to,
+        super_category_id,
+        None,
+        device,
+    )
+    .await?;
+    Ok(aggregate_timeline_detail(rows, from, to))
+}
+
+/// 拉指定 Timeline 区间内某个应用的精确用时和窗口标题明细。
+pub async fn timeline_app_block_detail(
+    pool: &DbPool,
+    from: DateTime<Local>,
+    to: DateTime<Local>,
+    super_category_id: String,
+    icon_process: String,
+    device: DeviceFilter,
+) -> Result<TimelineBlockDetail> {
+    let from = from.with_timezone(&Utc);
+    let to = to.with_timezone(&Utc);
+    if from >= to {
+        return Ok(TimelineBlockDetail {
+            apps: Vec::new(),
+            titles: Vec::new(),
+        });
+    }
+    let selected_process = icon_process.clone();
+    let group_key = pool
+        .0
+        .call(move |conn| {
+            conn.query_row(
+                "SELECT group_id FROM app_group_members
+                 WHERE process_name = ? AND deleted_at IS NULL",
+                rusqlite::params![selected_process],
+                |r| r.get::<_, String>(0),
+            )
+            .optional()
+            .db()
+        })
+        .await?
+        .unwrap_or(icon_process);
+    let rows = timeline_detail_rows(
+        pool,
+        from,
+        to,
+        super_category_id,
+        Some(group_key),
+        device,
+    )
+    .await?;
+    Ok(aggregate_timeline_detail(rows, from, to))
 }
 
 /// 拉某日 24 小时的分类时长分布。`day_offset = 0` 今天，-1 昨天。
@@ -1001,6 +1291,189 @@ mod tests {
         let rows = day_apps(&pool, 0, 50, DeviceFilter::All).await.unwrap();
         assert_eq!(rows.len(), 1, "excluded 行不该出现在 day_apps");
         assert_eq!(rows[0].process, "Editor");
+    }
+
+    #[tokio::test]
+    async fn timeline_sessions_returns_cross_midnight_rows_and_excludes_boundaries() {
+        let pool = fresh_test_pool().await;
+        let today = Local::now().date_naive();
+        let today_str = today.format("%Y-%m-%d").to_string();
+        let yesterday = today - Duration::days(1);
+        let yesterday_str = yesterday.format("%Y-%m-%d").to_string();
+        let midnight = Local
+            .from_local_datetime(&today.and_hms_opt(0, 0, 0).unwrap())
+            .single()
+            .unwrap();
+        let spanning_start = midnight - Duration::minutes(10);
+        let spanning_end = midnight + Duration::minutes(30);
+
+        // Touches today's start but has no overlap with today.
+        let previous_end = midnight;
+        let previous_start = midnight - Duration::minutes(20);
+        // Starts at today's end boundary for yesterday's query.
+        let next_start = midnight;
+        let next_end = midnight + Duration::minutes(10);
+        insert_session_with_times(
+            &pool,
+            TEST_SELF_ID,
+            &yesterday_str,
+            "Code",
+            spanning_start,
+            spanning_end,
+        )
+        .await;
+        insert_session_with_times(
+            &pool,
+            TEST_SELF_ID,
+            &yesterday_str,
+            "Code",
+            previous_start,
+            previous_end,
+        )
+        .await;
+        insert_session_with_times(
+            &pool,
+            TEST_SELF_ID,
+            &today_str,
+            "Code",
+            next_start,
+            next_end,
+        )
+        .await;
+        seed_solo_group(&pool, "Code", "code").await;
+
+        let today_rows = timeline_sessions(&pool, today, DeviceFilter::All).await.unwrap();
+        assert_eq!(today_rows.len(), 2, "今日应返回跨午夜会话和当天会话");
+        assert_eq!(today_rows[0].started_at, spanning_start.to_rfc3339());
+        assert_eq!(today_rows[0].ended_at, spanning_end.to_rfc3339());
+        assert_eq!(today_rows[0].category_id, "code");
+        assert!(
+            today_rows
+                .iter()
+                .all(|row| row.ended_at != previous_end.to_rfc3339()),
+            "恰好在今日开始边界结束的会话不应返回"
+        );
+
+        let yesterday_rows = timeline_sessions(&pool, yesterday, DeviceFilter::All)
+            .await
+            .unwrap();
+        assert_eq!(yesterday_rows.len(), 2, "昨日应返回昨日会话和跨午夜会话");
+        assert!(yesterday_rows.iter().any(|row| {
+            row.started_at == spanning_start.to_rfc3339()
+                && row.ended_at == spanning_end.to_rfc3339()
+        }));
+        assert!(
+            yesterday_rows
+                .iter()
+                .all(|row| row.started_at != next_start.to_rfc3339()),
+            "恰好在昨日结束边界开始的会话不应返回"
+        );
+    }
+
+    #[tokio::test]
+    async fn timeline_block_detail_clips_rows_and_sorts_longest_first() {
+        let pool = fresh_test_pool().await;
+        let today = Local::now().date_naive();
+        let today_str = today.format("%Y-%m-%d").to_string();
+        let block_start = Local
+            .from_local_datetime(&today.and_hms_opt(10, 0, 0).unwrap())
+            .single()
+            .unwrap();
+        let block_end = block_start + Duration::hours(1);
+
+        insert_session_titled(
+            &pool,
+            TEST_SELF_ID,
+            &today_str,
+            "Code",
+            "Code - partial",
+            block_start - Duration::minutes(20),
+            block_start + Duration::minutes(20),
+        )
+        .await;
+        insert_session_titled(
+            &pool,
+            TEST_SELF_ID,
+            &today_str,
+            "Chrome",
+            "Chrome - longest",
+            block_start + Duration::minutes(10),
+            block_end + Duration::minutes(10),
+        )
+        .await;
+        insert_session_titled(
+            &pool,
+            TEST_SELF_ID,
+            &today_str,
+            "Chrome",
+            "Chrome - short",
+            block_start + Duration::minutes(20),
+            block_start + Duration::minutes(30),
+        )
+        .await;
+        seed_solo_group(&pool, "Code", "code").await;
+        seed_solo_group(&pool, "Chrome", "browse").await;
+        pool.0
+            .call(|conn| {
+                conn.execute(
+                    "INSERT INTO super_categories(id, name, color, icon, sort_order)
+                     VALUES('timeline-work', 'Timeline Work', '#fff', 'Folder', 0)",
+                    [],
+                )
+                .db()?;
+                conn.execute(
+                    "UPDATE categories SET super_category_id = 'timeline-work'
+                     WHERE id IN ('code', 'browse')",
+                    [],
+                )
+                .db()?;
+                Ok(())
+            })
+            .await
+            .unwrap();
+
+        let detail = timeline_block_detail(
+            &pool,
+            block_start,
+            block_end,
+            "timeline-work".into(),
+            DeviceFilter::All,
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            detail
+                .apps
+                .iter()
+                .map(|app| (app.process.as_str(), app.icon_process.as_str(), app.secs))
+                .collect::<Vec<_>>(),
+            vec![("Chrome", "Chrome", 3600), ("Code", "Code", 1200)]
+        );
+        assert_eq!(detail.titles[0].title, "Chrome - longest");
+        assert_eq!(detail.titles[0].secs, 3000);
+        assert_eq!(detail.titles[1].title, "Code - partial");
+        assert_eq!(detail.titles[1].secs, 1200);
+        assert_eq!(detail.titles[2].title, "Chrome - short");
+        assert_eq!(detail.titles[2].secs, 600);
+
+        let app_detail = timeline_app_block_detail(
+            &pool,
+            block_start,
+            block_end,
+            "timeline-work".into(),
+            "Chrome".into(),
+            DeviceFilter::All,
+        )
+        .await
+        .unwrap();
+        assert_eq!(app_detail.apps.len(), 1);
+        assert_eq!(app_detail.apps[0].process, "Chrome");
+        assert_eq!(app_detail.apps[0].icon_process, "Chrome");
+        assert_eq!(app_detail.apps[0].secs, 3600);
+        assert_eq!(app_detail.titles[0].title, "Chrome - longest");
+        assert_eq!(app_detail.titles[0].secs, 3000);
+        assert_eq!(app_detail.titles[1].title, "Chrome - short");
+        assert_eq!(app_detail.titles[1].secs, 600);
     }
 
     /// 测 [`day_hours`]：跨两个小时的 session 应按时钟分桶到对应 HourSlot。

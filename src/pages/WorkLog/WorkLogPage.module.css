@@ -1,0 +1,341 @@
+/* Work Log page styles — follows existing page design system tokens */
+
+.page {
+  padding: 32px 32px 48px;
+  max-width: 720px;
+  margin: 0 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+}
+
+/* ---- Header ---- */
+
+.header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 8px;
+}
+
+.title {
+  font-size: 24px;
+  font-weight: var(--font-weight-semibold);
+  color: var(--text-strong);
+  letter-spacing: -0.015em;
+  margin: 0;
+}
+
+.icon {
+  color: #14b8a6;
+  flex-shrink: 0;
+}
+
+.description {
+  color: var(--text-muted);
+  font-size: 14px;
+  line-height: 1.5;
+  margin: 0;
+}
+
+/* ---- Fetch Button ---- */
+
+.fetchButton {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 20px;
+  background: #14b8a6;
+  color: white;
+  border: none;
+  border-radius: 8px;
+  font-size: 14px;
+  font-weight: var(--font-weight-medium);
+  cursor: pointer;
+  transition: opacity 0.15s;
+  align-self: flex-start;
+}
+
+.fetchButton:hover {
+  opacity: 0.9;
+}
+
+.fetchButton:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.fetchButton svg {
+  width: 16px;
+  height: 16px;
+}
+
+.spinner {
+  animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
+/* ---- Empty State ---- */
+
+.emptyState {
+  text-align: center;
+  padding: 48px 24px;
+  color: var(--text-muted);
+  font-size: 14px;
+}
+
+/* ---- Success Banner ---- */
+
+.successBanner {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 12px 16px;
+  background: rgba(20, 184, 166, 0.1);
+  color: #14b8a6;
+  border-radius: 8px;
+  font-size: 14px;
+  font-weight: var(--font-weight-medium);
+}
+
+.successBanner svg {
+  flex-shrink: 0;
+}
+
+/* ---- Work Item Card ---- */
+
+.itemCard {
+  background: var(--surface-card);
+  border: 1px solid var(--border-subtle);
+  border-radius: 12px;
+  padding: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  transition: border-color 0.15s;
+}
+
+.itemCardRegistered {
+  border-color: rgba(20, 184, 166, 0.3);
+}
+
+.itemHeader {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.itemKey {
+  font-family: monospace;
+  font-size: 13px;
+  font-weight: var(--font-weight-semibold);
+  background: rgba(20, 184, 166, 0.12);
+  color: #14b8a6;
+  padding: 2px 8px;
+  border-radius: 4px;
+}
+
+.itemSummary {
+  font-size: 15px;
+  font-weight: var(--font-weight-medium);
+  color: var(--text-strong);
+  flex: 1;
+  min-width: 0;
+}
+
+.badge {
+  font-size: 11px;
+  font-weight: var(--font-weight-medium);
+  padding: 2px 8px;
+  border-radius: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+
+.statusBadge {
+  background: rgba(59, 130, 246, 0.12);
+  color: #3b82f6;
+}
+
+.typeBadge {
+  background: rgba(139, 92, 246, 0.12);
+  color: #8b5cf6;
+}
+
+/* ---- Section Label ---- */
+
+.sectionLabel {
+  font-size: 12px;
+  font-weight: var(--font-weight-semibold);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-muted);
+  margin-bottom: 6px;
+}
+
+/* ---- Activity List ---- */
+
+.activityList {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.activityItem {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 12px;
+  background: var(--surface-2);
+  border-radius: 8px;
+  font-size: 13px;
+}
+
+.activityTime {
+  color: var(--text-muted);
+  font-family: monospace;
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.activityName {
+  color: var(--text-strong);
+  font-weight: var(--font-weight-medium);
+}
+
+.activityTitle {
+  color: var(--text-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  flex: 1;
+}
+
+.noActivities {
+  color: var(--text-muted);
+  font-size: 13px;
+  font-style: italic;
+  padding: 8px 0;
+}
+
+/* ---- Textarea ---- */
+
+.textarea {
+  width: 100%;
+  min-height: 120px;
+  padding: 12px;
+  border: 1px solid var(--border-subtle);
+  border-radius: 8px;
+  background: var(--surface-card);
+  color: var(--text-strong);
+  font-family: inherit;
+  font-size: 14px;
+  line-height: 1.6;
+  resize: vertical;
+  transition: border-color 0.15s;
+}
+
+.textarea:focus {
+  outline: none;
+  border-color: #14b8a6;
+}
+
+.textarea::placeholder {
+  color: var(--text-faint);
+}
+
+/* ---- Time Range ---- */
+
+.timeRange {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.timeInput {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.timeInputLabel {
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.timeInput input[type="datetime-local"] {
+  padding: 6px 10px;
+  border: 1px solid var(--border-subtle);
+  border-radius: 6px;
+  background: var(--surface-card);
+  color: var(--text-strong);
+  font-size: 13px;
+  font-family: inherit;
+}
+
+.timeInput input[type="datetime-local"]:focus {
+  outline: none;
+  border-color: #14b8a6;
+}
+
+.timeSeparator {
+  color: var(--text-muted);
+  font-size: 13px;
+  padding-top: 18px;
+}
+
+/* ---- Error ---- */
+
+.errorText {
+  color: var(--status-error);
+  font-size: 13px;
+}
+
+/* ---- Register Button ---- */
+
+.registerButton {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 16px;
+  background: transparent;
+  color: #14b8a6;
+  border: 1px solid #14b8a6;
+  border-radius: 8px;
+  font-size: 13px;
+  font-weight: var(--font-weight-medium);
+  cursor: pointer;
+  transition: all 0.15s;
+  align-self: flex-end;
+}
+
+.registerButton:hover {
+  background: rgba(20, 184, 166, 0.08);
+}
+
+.registerButton:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.registerButton svg {
+  width: 14px;
+  height: 14px;
+}
+
+.registeredButton {
+  background: rgba(20, 184, 166, 0.12);
+  color: #14b8a6;
+  border-color: transparent;
+  cursor: default;
+}
+
+.registeredButton:hover {
+  background: rgba(20, 184, 166, 0.12);
+}

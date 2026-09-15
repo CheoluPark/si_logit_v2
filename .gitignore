@@ -97,3 +97,10 @@ scripts/poc/output/
 # 演示录制会话(绝对坐标的本机操作轨迹)仅本地
 scripts/shots/*.jsonl
 scripts/shots/*.win.json
+
+# Local deepwork state
+.slim/deepwork/
+
+# Offline deploy artifacts
+offline-bundle/
+deploy/

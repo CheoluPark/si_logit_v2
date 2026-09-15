@@ -55,10 +55,15 @@
       "categories": "Categories",
       "devices": "Cloud Sync",
       "settings": "Settings",
-      "chat": "Chat"
+      "chat": "Chat",
+      "timeline": "Timeline",
+      "worklog": "Work Log"
     }
   },
   "sidebar": {
+    "langSwitch": {
+      "tooltip": "Switch to {{label}}"
+    },
     "capture": {
       "ok": "Capturing",
       "idle": "Paused",
@@ -179,7 +184,7 @@
       "startup": {
         "title": "Startup behavior",
         "autoStartLabel": "Launch on system startup",
-        "autoStartDescription": "Hindsight starts automatically after you log in.",
+        "autoStartDescription": "SI Logit starts automatically after you log in.",
         "showWindowLabel": "Show main window on startup",
         "showWindowDescription": "When off, start silently in the tray.",
         "minimizeToTrayLabel": "Minimize to tray on close",
@@ -285,7 +290,7 @@
         "reveal": "Show file",
         "error": "Export failed: {{message}}",
         "file": {
-          "title": "Hindsight usage statistics ({{start}} – {{end}})",
+          "title": "SI Logit usage statistics ({{start}} – {{end}})",
           "metaExportedAt": "Exported at: {{time}}",
           "metaRange": "Range: {{start}} – {{end}}",
           "metaNote": "Weekly / monthly stats cover full calendar weeks (Mon–Sun) / months and may extend beyond the selected range; app tables list the top {{n}} only.",
@@ -328,7 +333,7 @@
           "colDuration": "Duration",
           "colSuperCategory": "Group",
           "colShare": "Share",
-          "ovTitle": "Hindsight usage statistics",
+          "ovTitle": "SI Logit usage statistics",
           "ovRange": "Range",
           "ovDevice": "Devices",
           "ovExported": "Exported at",
@@ -502,6 +507,92 @@
       "unknown": "Unidentified sites",
       "unknownHint": "Records from before the upgrade, browsers without address-bar access, or unsupported setups such as Firefox / Linux",
       "noHost": "No websites were identified in this period: records from before the upgrade have no domain; reading the address bar needs permission (macOS: System Settings · Privacy & Security · Automation); Firefox and Linux are not supported yet."
+    }
+  },
+  "timeline": {
+    "title": "Timeline",
+    "pageTitle": "Timeline",
+    "meta": "{{date}}",
+    "cardTitle": "Activity timeline",
+    "dateNav": {
+      "prev": "Previous day",
+      "next": "Next day",
+      "prevAria": "Previous day",
+      "nextAria": "Next day",
+      "today": "Today",
+      "yesterday": "Yesterday",
+      "daysAgo": "{{count}} days ago",
+      "daysLater": "In {{count}} days"
+    },
+    "navigation": {
+      "previousDay": "Previous day",
+      "nextDay": "Next day",
+      "today": "Today",
+      "yesterday": "Yesterday",
+      "daysAgo": "{{count}} days ago",
+      "daysLater": "In {{count}} days"
+    },
+    "errors": {
+      "load": "Could not load activity sessions: {{message}}",
+      "loadFailed": "Could not load activity sessions: {{message}}",
+      "unknown": "Could not load activity sessions"
+    },
+    "loading": "Loading activity sessions…",
+    "empty": "No assigned category activity for this day.",
+    "category": "Category",
+    "away": "Away",
+    "gridAria": "Timeline grid; use the mouse wheel to zoom horizontally",
+    "barAria": "{{category}}, {{start}} to {{end}}, {{duration}}",
+    "selectedSummary": "Selected: {{category}} · {{start}}–{{end}} · {{duration}}",
+    "topApps": "Top Apps",
+    "titles": "Titles",
+    "detail": {
+      "close": "Close",
+      "closeAria": "Close app details",
+      "dialogAria": "{{app}} details",
+      "appTitle": "{{app}} details",
+      "usageDuration": "Usage: {{duration}}",
+      "loading": "Loading details…",
+      "empty": "No details available.",
+      "noTitles": "No titles recorded.",
+      "error": "Could not load details: {{message}}",
+      "topApps": "Top Apps",
+      "titles": "Titles"
+    },
+    "offPc": {
+      "drawerTitle": "Record time away",
+      "drawerSubtitle": "Add what you were doing during this away period.",
+      "superCategoryLabel": "Off-PC Work",
+      "taskTypeLabel": "Activity type",
+      "detailLabel": "Details",
+      "detailPlaceholder": "Describe what you were doing",
+      "timeRangeLabel": "Time range",
+      "startTimeLabel": "Start time",
+      "endTimeLabel": "End time",
+      "intervalLabel": "10-minute intervals",
+      "invalidRange": "End time must be later than start time.",
+      "supercategories": {
+        "play": "Entertainment"
+      },
+      "taskTypes": {
+        "meeting": "Meeting",
+        "businessTrip": "Business trip",
+        "exam": "Functional testing"
+      },
+      "save": "Save",
+      "cancel": "Cancel",
+      "saving": "Saving…",
+      "success": "Offline activity recorded.",
+      "validation": {
+        "taskTypeRequired": "Select an activity type.",
+        "detailRequired": "Enter details before saving."
+      },
+      "errors": {
+        "saveFailed": "Could not save offline activity: {{message}}",
+        "unknown": "Could not save offline activity."
+      },
+      "dialogAria": "Record offline activity",
+      "closeAria": "Close offline activity dialog"
     }
   },
   "today": {
@@ -697,7 +788,8 @@
         "work": "Work",
         "play": "Entertainment",
         "social": "Social",
-        "browse": "Browsing"
+        "browse": "Browsing",
+        "off_pc": "Off-PC Work"
       },
       "orphanLabel": "Ungrouped",
       "catCount": "{{count}} categories",
@@ -720,7 +812,8 @@
       "office": "Office",
       "workchat": "Work chat",
       "game": "Games",
-      "video": "Media"
+      "video": "Media",
+      "off_pc": "Off-PC Work"
     },
     "list": {
       "namePlaceholder": "Category name",
@@ -783,11 +876,12 @@
       "models": "Models",
       "general": "General",
       "prompt": "Prompt",
+      "jiraMcp": "Jira MCP",
       "external": "Cloud API"
     },
     "engine": {
       "sectionTitle": "Local AI engine",
-      "sectionDesc": "Hindsight ships with the llama.cpp inference engine and runs everything locally — screenshots are never uploaded to any external service.",
+      "sectionDesc": "SI Logit ships with the llama.cpp inference engine and runs everything locally — screenshots are never uploaded to any external service.",
       "loading": "Loading…",
       "installed": "Installed",
       "notInstalled": "Not installed",
@@ -809,7 +903,7 @@
         "headline": "NVIDIA CUDA was not detected.",
         "prefix": " Vision LLMs run very slowly on CPU. We recommend installing the",
         "linkText": " CUDA Toolkit from NVIDIA",
-        "suffix": " (≥ 12.4) first; Hindsight will automatically switch to the GPU-accelerated variant after a restart."
+        "suffix": " (≥ 12.4) first; SI Logit will automatically switch to the GPU-accelerated variant after a restart."
       },
       "uninstallConfirm": "Uninstall the local AI engine? Model files will not be affected.",
       "uninstallConfirmTitle": "Uninstall the local AI engine?",
@@ -922,7 +1016,7 @@
           "BALANCED": "Mid-size, balances quality and speed for everyday use.",
           "REASONING": "Deep reasoning — multi-step thinking, math, planning.",
           "R1": "DeepSeek R1 family — RL-trained reasoning model.",
-          "DEFAULT": "Hindsight's top pick — best overall balance."
+          "DEFAULT": "SI Logit's top pick — best overall balance."
         },
         "step2": "Text",
         "step2ToggleOnTooltip": "Use this model for segment summaries (Text). Replaces the previous selection.",
@@ -1057,6 +1151,17 @@
       "ocrDailyDescription": "Reads the screenshot backlog at the set time daily",
       "addTimeAria": "Add a time point",
       "removeTimeAria": "Remove the most recently added time point"
+    },
+    "jiraMcp": {
+      "title": "Jira MCP Connection",
+      "description": "Connect to your company's Jira server to fetch Work Items for the Work Log page.",
+      "urlLabel": "Server URL",
+      "urlPlaceholder": "https://jira.example.com",
+      "patLabel": "Personal Access Token (PAT)",
+      "patPlaceholder": "Paste your PAT",
+      "transportLabel": "Connection Type",
+      "transportRemote": "Remote",
+      "hint": "Used only to read Work Items assigned to you. The token is stored locally in your settings."
     }
   },
   "devices": {
@@ -1356,7 +1461,7 @@
       "export": {
         "frontmatterTitle": "Daily report — {{dateLabel}}",
         "heading": "Daily report — {{dateLabel}} · {{date}}",
-        "intro": "Generated by Hindsight AI · {{summary}}",
+        "intro": "Generated by SI Logit AI · {{summary}}",
         "segmentsCount": "{{count}} segments",
         "okCount": "{{count}} generated",
         "skipCount": "{{count}} skipped",
@@ -1603,8 +1708,35 @@
   },
   "notifications": {
     "scheduledOcr": {
-      "title": "Hindsight",
+      "title": "SI Logit",
       "body": "Scheduled OCR started: {{count}} screenshots to process"
     }
+  },
+  "workLog": {
+    "title": "Work Log",
+    "description": "Automatically map your daily activities to Jira work items and generate work logs.",
+    "fetchItems": "Fetch Work Items",
+    "fetching": "Fetching work items...",
+    "noItems": "No active work items found.",
+    "generateAll": "Generate All Work Logs",
+    "register": "Register",
+    "registering": "Registering...",
+    "registered": "Registered",
+    "editWorkLog": "Edit Work Log",
+    "matchedActivities": "Matched Activities",
+    "noActivities": "No matching activities found",
+    "timeRange": "Time Range",
+    "workItem": "Work Item",
+    "status": "Status",
+    "type": "Type",
+    "summary": "Summary",
+    "workLogText": "Work Log Text",
+    "registerSuccess": "Work log registered successfully",
+    "registerError": "Failed to register work log",
+    "noSummary": "No work log generated yet. Click \"Generate\" to auto-create.",
+    "startDate": "Start",
+    "endDate": "End",
+    "placeholder": "Enter work log description...",
+    "allItemsRegistered": "All work logs registered"
   }
 }

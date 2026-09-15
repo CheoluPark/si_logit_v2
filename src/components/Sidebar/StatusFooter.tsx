@@ -117,7 +117,7 @@ export function StatusFooter({
         className={`${styles.row} ${styles.langRow}`}
         type="button"
         onClick={() => setLocale(nextOption.value)}
-        title={`Switch to ${nextOption.label}`}
+        title={t("sidebar.langSwitch.tooltip", { label: nextOption.label })}
       >
         <span className={styles.swap} aria-hidden>
           {/* 当前语言态 */}

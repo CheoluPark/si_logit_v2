@@ -51,6 +51,24 @@ pub struct ExternalProfile {
     pub model: String,
 }
 
+/// Jira MCP 서버 연결 설정 (Work Log 페이지에서 Work Item 조회용).
+/// transport는 현재 "remote"(MCP over HTTP)만 지원.
+#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq)]
+#[serde(rename_all = "camelCase", default)]
+pub struct JiraMcpConfig {
+    /// Jira 서버 base URL (예: https://jira.company.com)
+    pub url: String,
+    /// Personal Access Token (Bearer 인증용, settings JSON에 평문 저장 — 기존 api_key 패턴과 동일)
+    pub pat: String,
+    /// 연결 방식: "remote" (현재 유일)
+    #[serde(default = "default_jira_transport")]
+    pub transport: String,
+}
+
+fn default_jira_transport() -> String {
+    "remote".to_string()
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
 pub struct AiConfig {
@@ -166,6 +184,10 @@ pub struct AiConfig {
     pub summary_parallel_slots: Option<u32>,
     /// 段总结阶段的每槽 ctx；`None` = fallback 到 [`Self::ctx_size`]。
     pub summary_ctx_size: Option<u32>,
+
+    /// Jira MCP 서버 연결 설정 (URL/PAT). Work Log 페이지의 fetch_work_items가 사용.
+    #[serde(default)]
+    pub jira_mcp: JiraMcpConfig,
 }
 
 impl AiConfig {
@@ -318,6 +340,7 @@ impl Default for AiConfig {
             summary_batch_size: None,
             summary_parallel_slots: None,
             summary_ctx_size: None,
+            jira_mcp: JiraMcpConfig::default(),
         }
     }
 }

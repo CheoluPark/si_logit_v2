@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { open } from "@tauri-apps/plugin-dialog";
 import { platform } from "@tauri-apps/plugin-os";
-import { Aperture, Clock, Languages, Loader2, Rocket } from "lucide-react";
+import { Aperture, Clock, Languages, Loader2, Pencil, Rocket } from "lucide-react";
 import { Section } from "../../../components/FormLayout/Section";
 import { Row } from "../../../components/FormLayout/Row";
 import { Toggle } from "../../../components/FormControls/Toggle";
@@ -14,6 +14,7 @@ import { ConfirmDialog } from "../../../components/ConfirmDialog/ConfirmDialog";
 import { listen } from "@tauri-apps/api/event";
 import { useSettings } from "../../../state/settings";
 import { useLocale, LOCALE_OPTIONS } from "../../../i18n/useLocale";
+import { useDeviceFilter } from "../../../state/deviceFilter";
 import {
   api,
   ENGINE_DOWNLOAD_EVENT,
@@ -26,8 +27,10 @@ import styles from "./GeneralTab.module.css";
 export default function GeneralTab() {
   const { t } = useTranslation();
   const { settings, update } = useSettings();
+  const { self, renameSelf } = useDeviceFilter();
   const [locale, setLocale] = useLocale();
   const [dataRoot, setDataRoot] = useState<string>("");
+  const [deviceName, setDeviceName] = useState("");
   const [pendingDataRoot, setPendingDataRoot] = useState<string | null>(null);
   // macOS 关闭按钮在窗口左上角；Win/Linux 在右上角。文案要根据平台变。
   const [isMacOS, setIsMacOS] = useState(false);
@@ -43,6 +46,10 @@ export default function GeneralTab() {
     api.getDataRoot().then(setDataRoot).catch(() => setDataRoot(""));
     setIsMacOS(platform() === "macos");
   }, []);
+
+  useEffect(() => {
+    setDeviceName(self?.name ?? "");
+  }, [self?.name]);
 
   if (!settings) return null;
 
@@ -190,8 +197,31 @@ export default function GeneralTab() {
     setPendingDataRoot(null);
   };
 
+  const saveDeviceName = () => {
+    const name = deviceName.trim();
+    if (self && name && name !== self.name) renameSelf(name);
+    else setDeviceName(self?.name ?? "");
+  };
+
   return (
     <>
+      <Section title={t("devices.sectionSelf")} icon={Pencil}>
+        <Row label={t("devices.self.tag")} description={t("devices.self.renameTitle")}>
+          <input
+            className={styles.deviceNameInput}
+            value={deviceName}
+            maxLength={32}
+            disabled={!self}
+            onChange={(event) => setDeviceName(event.target.value)}
+            onBlur={saveDeviceName}
+            onKeyDown={(event) => {
+              if (event.key === "Enter") event.currentTarget.blur();
+              if (event.key === "Escape") setDeviceName(self?.name ?? "");
+            }}
+          />
+        </Row>
+      </Section>
+
       <Section title={t("settings.general.language.title")} icon={Languages}>
         <Row
           label={t("settings.general.language.label")}

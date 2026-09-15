@@ -14,6 +14,18 @@ export interface HourSlot {
   segments: HourSegment[];
 }
 
+export interface TimelineSession {
+  startedAt: string;
+  endedAt: string;
+  categoryId: string;
+}
+
+export interface TimelineAppUsage {
+  process: string;
+  iconProcess: string;
+  secs: number;
+}
+
 export interface AppUsage {
   /** 显示名：组的 display_name（合并组内多个进程名） */
   process: string;
@@ -44,6 +56,16 @@ export interface TitleUsage {
   secs: number;
   /** 浏览器会话的网站域名（如 github.com）；非浏览器 / 老记录 / 读不到地址栏为 null */
   host: string | null;
+}
+
+export interface TimelineBlockDetail {
+  apps: TimelineAppUsage[];
+  titles: TitleUsage[];
+}
+
+export interface OffPcGap {
+  from: string;
+  to: string;
 }
 
 export interface DaySummaryDto {
@@ -283,11 +305,6 @@ export interface PartialDownload {
 /** 模型下载进度事件名。前端 listen 这个。 */
 export const MODEL_DOWNLOAD_EVENT = "ai://model-download-progress";
 
-/** OAuth 授权 URL 就绪事件：payload = { url, opened }。
- *  opened=false → 打开浏览器失败，前端立即显示「复制登录链接」兜底；
- *  opened=true 也不保证浏览器可见，前端延时后仍在等则同样显示兜底。 */
-export const OAUTH_URL_EVENT = "sync://oauth-url";
-
 /** 下载进度阶段。`downloaded` / `total` 只在 downloading 阶段有意义。 */
 export type EngineDownloadPhase =
   | "downloading"
@@ -427,6 +444,16 @@ export interface SegmentSummaryRow {
 
 /** AI 子系统的所有用户配置；嵌进 Settings.ai。
  *  字段镜像后端 Rust `crate::ai::config::AiConfig`（camelCase）。 */
+/** Jira MCP 서버 연결 설정. transport는 현재 "remote"만 지원. */
+export interface JiraMcpConfig {
+  /** Jira 서버 base URL (예: https://jira.company.com) */
+  url: string;
+  /** Personal Access Token (Bearer 인증용) */
+  pat: string;
+  /** 연결 방식: "remote" */
+  transport: string;
+}
+
 export interface ExternalProfile {
   /** 显示名(自动生成:provider · model) */
   name: string;
@@ -512,6 +539,9 @@ export interface AiConfig {
   /** 段总结阶段的每槽 ctx；null = fallback 到 [ctxSize]。
    *  summary 默认推荐高 ctx（容纳整段活动时间线）。 */
   summaryCtxSize: number | null;
+
+  /** Jira MCP 서버 연결 설정 (Work Log 페이지의 fetchWorkItems가 사용) */
+  jiraMcp?: JiraMcpConfig;
 }
 
 export type PromptLanguage = "zh" | "tw" | "en" | "ja" | "pt" | "es";
@@ -554,9 +584,6 @@ export interface Settings {
   autoStart: boolean;
   showWindowOnAutoStart: boolean;
   retentionDays: number;
-  /** Google Cloud Console 创建的 Desktop App OAuth 凭证（Drive 同步用） */
-  googleClientId: string;
-  googleClientSecret: string;
   /** 浏览器过滤：浏览器地址栏 URL 包含其中任意一条（忽略大小写）即跳过截图。
    *  默认装一组常见登录页路径片段。 */
   privacyUrlKeywords: string[];
@@ -587,12 +614,6 @@ export interface Settings {
   memoryOcrDailyTimes: string[];
   /** Chat 首次发送前的隐私确认；确认过一次即永久 true，不再弹。 */
   chatPrivacyAcknowledged: boolean;
-  /** 可选上云三挡（默认全 false）。打开 = 该数据集参与云同步的推与拉。 */
-  syncAiSummaries: boolean;
-  /** 聊天历史（会话+消息，含屏幕文字引用）。 */
-  syncChatHistory: boolean;
-  /** 屏幕记忆全文（OCR 屏幕逐字文本，敏感度最高）。 */
-  syncScreenMemory: boolean;
   /** AI 总结相关配置（端点、模型、时段、过滤、抽帧参数）。
    *  嵌套结构而不是平铺，跟后端 Settings.ai 对齐；
    *  更新某个子字段时调用方必须 spread 旧 ai：
@@ -622,27 +643,6 @@ export interface DeviceRow {
   os: string | null;
   lastSeenAt: string | null;
   isSelf: boolean;
-}
-
-export interface AuthState {
-  signedIn: boolean;
-  uid: string | null;
-  email: string | null;
-  /** OAuth 凭证是否齐全（决定登录按钮是否可点） */
-  configured: boolean;
-  /** 多账号场景下登到了不同账号；前端拿到后应提示用户重启 app 切换 DB */
-  requiresRestart?: boolean;
-}
-
-export interface SyncStatus {
-  running: boolean;
-  /** 此刻是否有一次 push/pull 正在执行(手动或后台 tick);跳页重挂后恢复按钮态用 */
-  syncInFlight: boolean;
-  lastPushedAt: string | null;
-  lastPulledAt: string | null;
-  lastError: string | null;
-  pending: number;
-  deadLetter: number;
 }
 
 /** 一次屏幕记忆消化(OCR→折叠→索引)的结果账单。 */
@@ -759,6 +759,29 @@ export interface MemoryPendingStats {
   digestRunning: boolean;
 }
 
+/** MCP Work Item placeholder — mirrors Rust WorkItem struct */
+export interface WorkItem {
+  key: string;
+  summary: string;
+  status: string;
+  assignee: string;
+  issueType: string;
+}
+
+/** Draft for registering a work log entry */
+export interface WorkLogDraft {
+  workItemKey: string;
+  summary: string;
+  startedAt: string;
+  endedAt: string;
+}
+
+/** Result of work log registration */
+export interface WorkLogResult {
+  success: boolean;
+  message: string;
+}
+
 export const api = {
   /** 把文本写到指定路径（AI 总结导出 Markdown 用） */
   writeTextFile: (path: string, content: string) =>
@@ -766,6 +789,50 @@ export const api = {
   /** 把托盘菜单文案同步成当前 UI 语言（show=显示主窗口 / quit=退出 的译文） */
   setTrayLabels: (show: string, quit: string) =>
     invoke<void>("set_tray_labels", { show, quit }),
+  getTimelineSessions: (date: string, deviceId?: string) =>
+    invoke<TimelineSession[]>("get_timeline_sessions", { date, deviceId }),
+  getTimelineBlockDetail: (
+    from: string,
+    to: string,
+    superCategoryId: string,
+    deviceId?: string,
+  ) =>
+    invoke<TimelineBlockDetail>("get_timeline_block_detail", {
+      from,
+      to,
+      superCategoryId,
+      deviceId,
+    }),
+  getTimelineAppBlockDetail: (
+    from: string,
+    to: string,
+    superCategoryId: string,
+    iconProcess: string,
+    deviceId?: string,
+  ) =>
+    invoke<TimelineBlockDetail>("get_timeline_app_block_detail", {
+      from,
+      to,
+      superCategoryId,
+      iconProcess,
+      deviceId,
+    }),
+  recordOffPcWork: (
+    from: string,
+    to: string,
+    deviceId: string,
+    activityType: string,
+    detail: string,
+  ) =>
+    invoke<number>("record_off_pc_work", {
+      from,
+      to,
+      deviceId,
+      activityType,
+      detail,
+    }),
+  getRecordableOffPcGaps: (date: string, deviceId: string) =>
+    invoke<OffPcGap[]>("get_recordable_off_pc_gaps", { date, deviceId }),
   getDayHours: (dayOffset: number, deviceId?: string) =>
     invoke<HourSlot[]>("get_day_hours", { dayOffset, deviceId }),
   getDayApps: (dayOffset: number, limit?: number, deviceId?: string) =>
@@ -813,7 +880,7 @@ export const api = {
     invoke<void>("unassign_app", { processName }),
   listUnclassifiedApps: (daysBack?: number) =>
     invoke<UnclassifiedApp[]>("list_unclassified_apps", { daysBack }),
-  // —— v28 大类（super-category）—— 本地 only，sync 暂未接入
+  // —— v28 大类（super-category）—— local only
   listSuperCategories: () =>
     invoke<SuperCategory[]>("list_super_categories"),
   createSuperCategory: (input: SuperCategoryInput) =>
@@ -860,21 +927,6 @@ export const api = {
   getStorageInfo: () => invoke<StorageInfo>("get_storage_info"),
   purgeActivities: () => invoke<void>("purge_activities"),
   purgeScreenshots: () => invoke<void>("purge_screenshots"),
-  /** 删除本机推过的所有 Drive 同步文件 + 上传 tombstone 通知对端清镜像。
-   *  返回实际删除的 Drive 文件数。
-   *  - `keepLocal=false`：本机也按同款 clearedAt trim 旧数据（对称语义，离职/卖机器场景）
-   *  - `keepLocal=true`：本机数据完整保留（换 Google 账号场景，迁数据到新账号） */
-  purgeCloudData: (keepLocal: boolean) =>
-    invoke<number>("purge_cloud_data", { keepLocal }),
-  /** 从云端永久移除一台不在自己手里的远端设备：
-   *  - 删 Drive 上 `device.<deviceId>.*` 全部文件
-   *  - 上传 tombstone 让其它设备 pull 后也清掉这台设备的活动 + 软删 devices 行
-   *  - 本机：删 activities + UPDATE devices SET deleted_at
-   *
-   *  返回 Drive 上被删除的文件数。
-   *  必须已登录；deviceId == self 会被后端拒（请走 purgeCloudData）。 */
-  forgetRemoteDevice: (deviceId: string) =>
-    invoke<number>("forget_remote_device", { deviceId }),
   openScreenshotsDir: () => invoke<void>("open_screenshots_dir"),
   getDataRoot: () => invoke<string>("get_data_root"),
   setDataRoot: (path: string) => invoke<void>("set_data_root", { path }),
@@ -884,12 +936,7 @@ export const api = {
     color?: string,
     icon?: string,
   ) => invoke<DeviceRow>("update_self_device", { name, color, icon }),
-  authStatus: () => invoke<AuthState>("auth_status"),
-  signInWithGoogle: () => invoke<AuthState>("sign_in_with_google"),
-  signOut: () => invoke<void>("sign_out"),
   restartApp: () => invoke<void>("restart_app"),
-  syncStatus: () => invoke<SyncStatus>("sync_status"),
-  syncNow: () => invoke<void>("sync_now"),
   /** 测试 AI 端点连通性：GET {endpoint}/models。
    *  失败不抛 Promise reject，而是 resolve { ok: false, message }，
    *  前端只需检查 ok 字段。 */
@@ -1137,4 +1184,10 @@ export const api = {
     invoke<void>("export_usage_xlsx", { path, spec }),
   /** 最早一条活动记录的本地日期("YYYY-MM-DD";空库 null)。导出「全部」范围用。 */
   earliestActivityDate: () => invoke<string | null>("earliest_activity_date"),
+  // --- worklog: MCP placeholder ---
+  /** Fetch active Jira work items assigned to the current user (placeholder). */
+  fetchWorkItems: () => invoke<WorkItem[]>("fetch_work_items"),
+  /** Register a work log entry for a Jira issue (placeholder). */
+  registerWorkLog: (draft: WorkLogDraft) =>
+    invoke<WorkLogResult>("register_work_log", { draft }),
 };

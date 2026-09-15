@@ -23,7 +23,6 @@ use crate::repo::devices;
 use crate::repo::settings::Settings;
 use crate::storage::SqliteResultExt;
 use crate::storage::{db_path, DbPool};
-use crate::sync::engine::SyncEngine;
 use crate::{account, platform, storage};
 
 #[derive(Default, Serialize, Deserialize)]
@@ -198,18 +197,6 @@ pub async fn init_capture_service(
         svc.start().await;
     }
     svc
-}
-
-/// 第 4 步：启动同步引擎。登录态由 engine 内部检查，未登录所有循环都是 no-op；
-/// 所以可以无条件 start，登录后自动开始推。
-/// `mem` = 记忆库句柄(聊天历史/屏幕记忆的可选上云用;打开失败传 None)。
-pub async fn init_sync_engine(
-    pool: DbPool,
-    mem: Option<crate::memory::MemoryDb>,
-) -> Arc<SyncEngine> {
-    let sync_engine = Arc::new(SyncEngine::new(pool, mem));
-    sync_engine.start().await;
-    sync_engine
 }
 
 /// 安装系统托盘 + 主窗口的 close handler。
@@ -409,7 +396,7 @@ fn install_tray_icon(app: &mut App) -> tauri::Result<()> {
         .icon(tray_icon)
         // 非 macOS 平台此标志被忽略
         .icon_as_template(as_template)
-        .tooltip("Hindsight")
+        .tooltip("SI Logit")
         .menu(&menu)
         // 左键不弹菜单（留给 toggle 显隐）；菜单只在右键 / macOS 上 showMenu 时弹
         .show_menu_on_left_click(false)

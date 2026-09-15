@@ -98,7 +98,7 @@ export default function AboutTab() {
           draggable={false}
         />
         <div className={styles.heroText}>
-          <div className={styles.appName}>Hindsight</div>
+          <div className={styles.appName}>SI Logit</div>
           <div className={styles.version}>
             {t("settings.about.subtitle", {
               version: appVersion || "0.1.0",

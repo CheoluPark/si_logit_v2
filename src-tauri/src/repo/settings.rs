@@ -395,6 +395,106 @@ pub async fn save(pool: &DbPool, settings: &Settings) -> Result<()> {
     Ok(())
 }
 
+/// 递归合并 JSON：object 类型按 key 逐个 deep_merge，其余直接替换。
+fn deep_merge(base: &mut serde_json::Value, patch: serde_json::Value) {
+    use serde_json::Value;
+    match (&mut *base, patch) {
+        (Value::Object(base_map), Value::Object(patch_map)) => {
+            for (k, v) in patch_map {
+                deep_merge(base_map.entry(k).or_insert(Value::Null), v);
+            }
+        }
+        (_, patch) => *base = patch,
+    }
+}
+
+/// exe 옆의 preset.json(부분 Settings JSON, camelCase)을 현재 설정에 deep-merge 후 저장.
+/// 적용 후 preset.json → preset.applied.json 으로 rename (재부팅 시 재적용 방지).
+/// 파일 없으면 no-op. 파싱 실패 시 preset.failed.json 으로 rename + 에러 로그 (시작 차단 금지).
+///
+/// merge base는 **저장된 settings 원문 JSON**을 쓴다. `load()`를 base로 쓰면
+/// settings 원문이 손상됐을 때 load()가 기본값을 돌려주고, 그걸 save()가 덮어써서
+/// "손상 원문은 절대 기본값으로 덮지 않는다"는 no-clobber 계약을 깨기 때문.
+/// 원문 파싱 실패 시 preset 적용을 생략하고 preset.json은 그대로 둔다
+/// (설정이 복구되면 다음 부팅 때 적용됨).
+pub async fn apply_preset_if_present(pool: &DbPool) -> Result<()> {
+    let exe = match std::env::current_exe() {
+        Ok(p) => p,
+        Err(_) => return Ok(()),
+    };
+    let dir = match exe.parent() {
+        Some(d) => d,
+        None => return Ok(()),
+    };
+    let preset_path = dir.join("preset.json");
+
+    if !preset_path.exists() {
+        return Ok(());
+    }
+
+    log::info!("preset.json found at: {}", preset_path.display());
+
+    let preset_raw = match std::fs::read_to_string(&preset_path) {
+        Ok(s) => s,
+        Err(e) => {
+            log::error!("preset.json 读取失败: {e}");
+            let _ = std::fs::rename(&preset_path, dir.join("preset.failed.json"));
+            return Ok(());
+        }
+    };
+
+    let preset: serde_json::Value = match serde_json::from_str(&preset_raw) {
+        Ok(v) => v,
+        Err(e) => {
+            log::error!("preset.json 解析失败: {e}");
+            let _ = std::fs::rename(&preset_path, dir.join("preset.failed.json"));
+            return Ok(());
+        }
+    };
+
+    // 저장된 settings 원문을 그대로 읽어 base로 사용
+    let raw: String = pool
+        .0
+        .call(|conn| {
+            let row: String = conn
+                .query_row("SELECT data FROM settings_store WHERE id = 1", [], |r| {
+                    r.get(0)
+                })
+                .db()?;
+            Ok(row)
+        })
+        .await?;
+
+    let mut merged: serde_json::Value = match serde_json::from_str(&raw) {
+        Ok(v) => v,
+        Err(e) => {
+            log::error!("settings 원문 파싱 실패 — preset 적용 생략(원문 보존): {e}");
+            return Ok(());
+        }
+    };
+
+    deep_merge(&mut merged, preset);
+
+    match serde_json::from_value::<Settings>(merged) {
+        Ok(new_settings) => {
+            save(pool, &new_settings).await?;
+            log::info!("preset.json 已应用到 settings");
+        }
+        Err(e) => {
+            log::error!("preset.json 合并后反序列化失败(不影响启动): {e}");
+            let _ = std::fs::rename(&preset_path, dir.join("preset.failed.json"));
+            return Ok(());
+        }
+    }
+
+    match std::fs::rename(&preset_path, dir.join("preset.applied.json")) {
+        Ok(()) => log::info!("preset.json → preset.applied.json"),
+        Err(e) => log::warn!("preset.json rename 失败(不影响启动): {e}"),
+    }
+
+    Ok(())
+}
+
 /// 把 [`SettingsPatch`] 应用到当前 [`Settings`] 上，输出合并结果。
 /// 各字段都做合理 clamp / sanitize（如 capture_interval 钳到 1..=600，retention 钳到 1..=365）。
 pub fn apply_patch(current: Settings, patch: SettingsPatch) -> Settings {
@@ -859,6 +959,32 @@ mod tests {
         // 空输入 / 无密钥输入
         assert_eq!(redact_secrets(""), "");
         assert_eq!(redact_secrets("{}"), "{}");
+    }
+
+    /// preset 병합의 핵심 로직: object는 키 단위 재귀 병합, scalar/array는 통째로 교체.
+    #[test]
+    fn deep_merge_merges_objects_and_replaces_scalars_and_arrays() {
+        let mut base = serde_json::json!({
+            "captureIntervalSeconds": 30,
+            "workRanges": [{"start": "09:00", "end": "18:00"}],
+            "ai": {"jiraMcp": {"url": "old", "pat": "old-pat"}, "modelsPath": "/m"}
+        });
+        deep_merge(
+            &mut base,
+            serde_json::json!({
+                "captureIntervalSeconds": 60,
+                "workRanges": [{"start": "08:00", "end": "17:00"}],
+                "ai": {"jiraMcp": {"pat": "new-pat"}}
+            }),
+        );
+        assert_eq!(base["captureIntervalSeconds"], 60, "scalar는 preset 값으로 교체");
+        assert_eq!(
+            base["workRanges"][0]["start"], "08:00",
+            "array는 통째로 교체 (preset이 주면)"
+        );
+        assert_eq!(base["ai"]["jiraMcp"]["url"], "old", "object는 키 단위 병합");
+        assert_eq!(base["ai"]["jiraMcp"]["pat"], "new-pat");
+        assert_eq!(base["ai"]["modelsPath"], "/m", "preset이 안 준 키는 유지");
     }
 
     /// external_enabled 单开关拆成「配好云端」+「选定云端」两概念后的一次性迁移：

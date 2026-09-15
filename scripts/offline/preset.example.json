@@ -1,0 +1,16 @@
+{
+  "captureIntervalSeconds": 30,
+  "workHoursEnabled": true,
+  "workRanges": [
+    { "start": "09:00", "end": "18:00" }
+  ],
+  "privacyUrlKeywords": [],
+  "ai": {
+    "jiraMcp": {
+      "url": "https://jira.company.com",
+      "pat": "PASTE_YOUR_PAT_HERE",
+      "transport": "remote"
+    },
+    "modelsPath": "C:\\Hindsight\\models"
+  }
+}

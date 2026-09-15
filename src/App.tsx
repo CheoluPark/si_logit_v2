@@ -17,6 +17,7 @@ import {
 const Today = lazy(() => import("./pages/Today/TodayPage"));
 const Week = lazy(() => import("./pages/Week/WeekPage"));
 const Month = lazy(() => import("./pages/Month/MonthPage"));
+const TimelinePage = lazy(() => import("./pages/Timeline/TimelinePage"));
 const AISummaryPage = lazy(() => import("./pages/AISummary/AISummaryPage"));
 const DailyTab = lazy(() => import("./pages/AISummary/tabs/DailyTab"));
 const WeeklyTab = lazy(() => import("./pages/AISummary/tabs/WeeklyTab"));
@@ -25,12 +26,12 @@ const DebugTab = lazy(() => import("./pages/AISummary/tabs/DebugTab"));
 const ChatPage = lazy(() => import("./pages/Chat/ChatPage"));
 const SearchPage = lazy(() => import("./pages/Search/SearchPage"));
 const AISettingsPage = lazy(() => import("./pages/AISettings/AISettingsPage"));
+const WorkLogPage = lazy(() => import("./pages/WorkLog/WorkLogPage"));
 const EngineTab = lazy(() => import("./pages/AISettings/tabs/EngineTab"));
 const ModelsTab = lazy(() => import("./pages/AISettings/tabs/ModelsTab"));
 const AiGeneralTab = lazy(() => import("./pages/AISettings/tabs/GeneralTab"));
 const PromptTab = lazy(() => import("./pages/AISettings/tabs/PromptTab"));
-const ExternalApiTab = lazy(() => import("./pages/AISettings/tabs/ExternalApiTab"));
-const Devices = lazy(() => import("./pages/Devices/DevicesPage"));
+const JiraMcpTab = lazy(() => import("./pages/AISettings/tabs/JiraMcpTab"));
 const CategoriesPage = lazy(() => import("./pages/Categories/CategoriesPage"));
 const ListTab = lazy(() => import("./pages/Categories/tabs/ListTab"));
 const AppsPage = lazy(() => import("./pages/Apps/AppsPage"));
@@ -51,6 +52,8 @@ function i18nToPromptLang(lang: string): PromptLanguage {
   if (l.startsWith("ja")) return "ja";
   if (l.startsWith("pt")) return "pt";
   if (l.startsWith("es")) return "es";
+  // Korean UI has no dedicated AI prompt resource yet; avoid the Chinese fallback.
+  if (l.startsWith("ko")) return "en";
   return "zh";
 }
 
@@ -103,6 +106,7 @@ function App() {
           <Route path={ROUTES.today} element={<Today />} />
           <Route path={ROUTES.week} element={<Week />} />
           <Route path={ROUTES.month} element={<Month />} />
+          <Route path={ROUTES.timeline} element={<TimelinePage />} />
           <Route path={ROUTES.chat} element={<ChatPage />} />
           <Route path={ROUTES.aiSummary} element={<AISummaryPage />}>
             <Route index element={<DailyTab />} />
@@ -118,9 +122,9 @@ function App() {
             <Route path="models" element={<ModelsTab />} />
             <Route path="general" element={<AiGeneralTab />} />
             <Route path="prompt" element={<PromptTab />} />
-            <Route path="external" element={<ExternalApiTab />} />
+            <Route path="jira-mcp" element={<JiraMcpTab />} />
           </Route>
-          <Route path={ROUTES.devices} element={<Devices />} />
+          <Route path={ROUTES.worklog} element={<WorkLogPage />} />
           <Route path={ROUTES.categories} element={<CategoriesPage />}>
             <Route index element={<ListTab />} />
             <Route path="apps" element={<AppsPage />} />

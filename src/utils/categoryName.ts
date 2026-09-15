@@ -25,7 +25,11 @@ const DEFAULT_SUPER_CATEGORY_NAMES: Record<string, string> = {
   play: "娱乐",
   social: "社交",
   browse: "浏览",
+  off_pc: "PC 외 업무",
 };
+
+// off_pc 子分类由 Rust 端懒创建，id 是随机 UUID，无法按 id 匹配 → 按名字兜底
+const OFF_PC_CATEGORY_NAME = "PC 외 업무";
 
 /** 渲染分类名：默认分类（且未被改名）走 i18n，其余直接用 category.name */
 export function displayCategoryName(
@@ -35,6 +39,9 @@ export function displayCategoryName(
   const original = DEFAULT_CATEGORY_NAMES[category.id];
   if (original !== undefined && category.name === original) {
     return t(`categories.defaults.${category.id}`);
+  }
+  if (category.name === OFF_PC_CATEGORY_NAME) {
+    return t("categories.defaults.off_pc");
   }
   return category.name;
 }

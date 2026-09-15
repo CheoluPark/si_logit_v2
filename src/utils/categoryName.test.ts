@@ -19,6 +19,12 @@ describe("displayCategoryName", () => {
   it("非默认分类（id 不在映射表）→ 直接用 name", () => {
     expect(displayCategoryName({ id: "custom-123", name: "自定义" }, t)).toBe("自定义");
   });
+
+  it("off_pc 子分类（UUID id）→ 按名字走 i18n", () => {
+    expect(displayCategoryName({ id: "uuid-xyz", name: "PC 외 업무" }, t)).toBe(
+      "categories.defaults.off_pc",
+    );
+  });
 });
 
 describe("displaySuperCategoryName", () => {
@@ -34,5 +40,11 @@ describe("displaySuperCategoryName", () => {
 
   it("非默认大类 → 直接用 name", () => {
     expect(displaySuperCategoryName({ id: "misc", name: "杂项" }, t)).toBe("杂项");
+  });
+
+  it("off_pc 默认大类且未改名 → 走 i18n", () => {
+    expect(displaySuperCategoryName({ id: "off_pc", name: "PC 외 업무" }, t)).toBe(
+      "categories.super.defaults.off_pc",
+    );
   });
 });

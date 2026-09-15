@@ -437,7 +437,7 @@ describe("renderUsageExport", () => {
       daily: { date: string; totalSeconds: number; apps: unknown[] }[];
       weekly: null;
     };
-    expect(parsed.source).toBe("Hindsight");
+    expect(parsed.source).toBe("SI Logit");
     expect(parsed.daily[0].date).toBe("2026-06-30");
     expect(parsed.daily[0].totalSeconds).toBe(3600);
     expect(parsed.daily[0].apps).toHaveLength(12);

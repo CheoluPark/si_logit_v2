@@ -1,0 +1,57 @@
+/* JiraMcpTab-specific styles.
+   Base form styles live in AISettings.module.css (.content, .externalInput, etc.).
+   Only add styles that are unique to this tab. */
+
+/* Password field wrapper: positions the toggle button inside the input */
+.patField {
+  position: relative;
+  width: 100%;
+}
+
+.patField .externalInput {
+  width: 100%;
+  padding-right: 36px;
+}
+
+/* Eye toggle button — positioned at the right edge of the password input */
+.patToggle {
+  position: absolute;
+  right: 4px;
+  top: 50%;
+  transform: translateY(-50%);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: none;
+  border-radius: var(--radius-xs);
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  transition:
+    color 140ms ease-out,
+    background-color 140ms ease-out;
+}
+
+.patToggle:hover {
+  color: var(--text-strong);
+  background: var(--surface-2);
+}
+
+/* Read-only transport badge */
+.transportBadge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 32px;
+  padding: 0 12px;
+  background: var(--surface-2);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-sm);
+  font-size: 13px;
+  font-weight: var(--font-weight-medium);
+  color: var(--text-muted);
+  user-select: none;
+}

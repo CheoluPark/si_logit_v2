@@ -12,7 +12,6 @@ mod permissions;
 mod platform;
 mod repo;
 mod storage;
-mod sync;
 
 use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
@@ -69,7 +68,7 @@ pub fn run() {
 
     // 单实例守门：第二个进程一启动就把现有窗口拉到前台再自己退出。
     // 必须在 .setup 之前的最前面注册——后续 plugin / setup 都默认假设
-    // "整个进程内 capture / DB / sync 单例运行"。
+    // "整个进程内 capture / DB 单例运行"。
     //
     // 本地多设备同步测试场景（[`docs/internal/local-multi-device-test.md`]）需要
     // 同一台机器跑两个独立实例 → 设 `HINDSIGHT_MULTI_INSTANCE=1` 跳过 single instance
@@ -153,6 +152,11 @@ pub fn run() {
                     .await
                     .expect("初始化数据库失败");
 
+                // exe 옆 preset.json이 있으면 settings에 자동 병합
+                if let Err(e) = settings::apply_preset_if_present(&pool).await {
+                    log::warn!("preset 적용 실패(시작 차단 안 함): {e}");
+                }
+
                 let cfg = settings::load(&pool).await.expect("读取设置");
                 MINIMIZE_TO_TRAY
                     .store(cfg.minimize_to_tray, std::sync::atomic::Ordering::Relaxed);
@@ -202,15 +206,12 @@ pub fn run() {
                     .sync(cfg.memory_ocr_resident, memdb.clone())
                     .await;
                 handle.manage(resident);
-                let memdb_for_sync = memdb.clone();
                 handle.manage(commands::screen_memory::MemoryState(memdb));
                 spawn_cleanup_task(pool.clone());
                 bootstrap::spawn_backfill_tasks(pool.clone());
-                let sync_engine = bootstrap::init_sync_engine(pool.clone(), memdb_for_sync).await;
 
                 handle.manage(pool);
                 handle.manage(svc);
-                handle.manage(sync_engine);
                 // 启动 idle watcher：跑完日报/调试 N 秒无新请求 → 自动 stop 释放显存。
                 // watcher 持 Weak<EngineSupervisor>，supervisor drop 后自然退出，无需手动取消。
                 let _watcher = engine_supervisor.spawn_idle_watcher();
@@ -235,6 +236,11 @@ pub fn run() {
             commands::capture::stop_capture,
             commands::capture::get_capture_status,
             // --- data: 报表查询 ---
+            commands::data::get_recordable_off_pc_gaps,
+            commands::data::record_off_pc_work,
+            commands::data::get_timeline_app_block_detail,
+            commands::data::get_timeline_block_detail,
+            commands::data::get_timeline_sessions,
             commands::data::get_day_hours,
             commands::data::get_day_apps,
             commands::data::get_hour_apps,
@@ -254,7 +260,7 @@ pub fn run() {
             commands::categories::assign_app_to_category,
             commands::categories::unassign_app,
             commands::categories::list_unclassified_apps,
-            // --- super_categories: 大类容器（v28，本地 only，sync 暂未接入） ---
+            // --- super_categories: 大类容器（v28，本地 only） ---
             commands::super_categories::list_super_categories,
             commands::super_categories::create_super_category,
             commands::super_categories::update_super_category,
@@ -282,8 +288,6 @@ pub fn run() {
             commands::storage::get_storage_info,
             commands::storage::purge_activities,
             commands::storage::purge_screenshots,
-            commands::storage::purge_cloud_data,
-            commands::storage::forget_remote_device,
             commands::storage::open_screenshots_dir,
             commands::storage::get_data_root,
             commands::storage::set_data_root,
@@ -294,14 +298,6 @@ pub fn run() {
             // --- devices: 设备列表 ---
             commands::devices::list_devices,
             commands::devices::update_self_device,
-            // --- auth: Google OAuth ---
-            commands::auth::auth_status,
-            commands::auth::sign_in_with_google,
-            commands::auth::sign_out,
-            commands::auth::restart_app,
-            // --- sync: 云同步 ---
-            commands::sync::sync_status,
-            commands::sync::sync_now,
             // --- ai: endpoint 测试 ---
             commands::ai_endpoint::test_ai_endpoint,
             commands::ai_endpoint::test_ai_chat,
@@ -355,6 +351,9 @@ pub fn run() {
             commands::ai_summary::get_week_summary,
             commands::ai_summary::clear_week_summary,
             commands::ai_summary::precheck_week_summary,
+            // --- worklog: Work Log MCP placeholder ---
+            commands::worklog::fetch_work_items,
+            commands::worklog::register_work_log,
         ])
         .build(tauri::generate_context!())
         // 启动期失败需快速失败：generate_context! / build() 失败 = Tauri runtime

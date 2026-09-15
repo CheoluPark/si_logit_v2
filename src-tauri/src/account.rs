@@ -185,8 +185,8 @@ fn migrate_legacy_files(data_root: &Path, owner: &str) -> Result<bool> {
     Ok(all_done)
 }
 
-/// sign-in Case A 调：声明当前 `hindsight.sqlite` 归属于这个 uid，
-/// 下次启动时 startup migration 会把文件 rename 到 `hindsight.<uid>.sqlite`。
+/// Legacy account migration hook retained for old callers; offline runtime no longer invokes it.
+#[allow(dead_code)]
 pub fn claim_legacy_for(uid: &str) -> io::Result<()> {
     set_legacy_owner(Some(uid))
 }

@@ -1,4 +1,4 @@
-; Hindsight NSIS installer hooks.
+; SI Logit NSIS installer hooks.
 ; Tauri inserts these macros inside the auto-generated Section "Uninstall"
 ; (run via !ifmacrodef so missing hooks are silently skipped).
 

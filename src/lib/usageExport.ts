@@ -388,7 +388,7 @@ function renderJson(data: UsageExportData): string {
 
   return JSON.stringify(
     {
-      source: "Hindsight",
+      source: "SI Logit",
       type: "usage-statistics",
       version: 1,
       exportedAt: data.exportedAt,
@@ -1074,12 +1074,12 @@ function renderHtml(
 
   const body: string[] = [
     `<nav class="nav"><div class="nav-in">`,
-    `<a class="nav-brand" href="#top">${brandMark("hs-nav")}<span>Hindsight</span></a>`,
+    `<a class="nav-brand" href="#top">${brandMark("hs-nav")}<span>SI Logit</span></a>`,
     navLinks,
     `</div></nav>`,
     `<div class="wrap" id="top">`,
     `<header class="head">`,
-    `<div class="brand">${brandMark("hs-head")}<span class="brand-name">Hindsight</span></div>`,
+    `<div class="brand">${brandMark("hs-head")}<span class="brand-name">SI Logit</span></div>`,
     `<h1>${htmlEscape(title)}</h1>`,
     `<div class="metas">`,
     `<span class="chip"><span class="cd"></span>${htmlEscape(t("settings.data.export.file.metaRange", { start: data.rangeStart, end: data.rangeEnd }))}</span>`,
@@ -1163,7 +1163,7 @@ function renderHtml(
   body.push(
     `<footer class="report-foot">` +
       `<span>${htmlEscape(t("settings.data.export.file.metaExportedAt", { time: new Date(data.exportedAt).toLocaleString(locale) }))}</span>` +
-      `<span class="brand"><span class="dot" style="background:var(--accent)"></span>Hindsight</span>` +
+      `<span class="brand"><span class="dot" style="background:var(--accent)"></span>SI Logit</span>` +
       `</footer>`,
     `</div>`,
   );

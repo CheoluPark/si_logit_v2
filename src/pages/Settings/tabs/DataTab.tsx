@@ -3,8 +3,6 @@ import { useTranslation } from "react-i18next";
 import { open } from "@tauri-apps/plugin-dialog";
 import { revealItemInDir } from "@tauri-apps/plugin-opener";
 import {
-  AlertCircle,
-  Cloud,
   Database,
   DatabaseBackup,
   DatabaseZap,
@@ -21,7 +19,6 @@ import { Row } from "../../../components/FormLayout/Row";
 import { Slider } from "../../../components/FormControls/Slider";
 import { PathField } from "../../../components/FormControls/PathField";
 import { ConfirmDialog } from "../../../components/ConfirmDialog/ConfirmDialog";
-import { RemoveDeviceDialog } from "../../../components/RemoveDeviceDialog/RemoveDeviceDialog";
 import { ExportUsageDialog } from "../../../components/ExportUsageDialog/ExportUsageDialog";
 import { useSettings } from "../../../state/settings";
 import { api, type StorageInfo } from "../../../api/hindsight";
@@ -35,16 +32,13 @@ function fmtBytes(n: number): string {
   return `${(n / 1024 / 1024 / 1024).toFixed(2)} GB`;
 }
 
-/** "db" = 从云端重建本机数据；"shots" = 清空截图；"remove" = 从云端移除本设备 */
-type PurgeTarget = "db" | "shots" | "remove";
+type PurgeTarget = "db" | "shots";
 
 export default function DataTab() {
   const { t } = useTranslation();
   const { settings, update } = useSettings();
   const [storage, setStorage] = useState<StorageInfo | null>(null);
-  /** 简单确认弹窗只用于 rebuild + shots；remove 走单独的 RemoveDeviceDialog */
   const [simpleConfirm, setSimpleConfirm] = useState<"db" | "shots" | null>(null);
-  const [removeOpen, setRemoveOpen] = useState(false);
   const [exportOpen, setExportOpen] = useState(false);
   // 哪一个 purge 操作正在跑：null = 三个按钮都空闲。busy 时**所有**三个按钮 disabled，
   // 避免用户连点 / 在一个 destructive op 跑到一半时触发另一个。busy 的那一个按钮显示
@@ -77,33 +71,6 @@ export default function DataTab() {
       } else {
         await api.purgeScreenshots();
       }
-      refreshStorage();
-    } catch (e) {
-      logError("data.clear", e);
-      window.alert(
-        t("settings.data.purgeDialog.error", {
-          message: e instanceof Error ? e.message : String(e),
-        }),
-      );
-    } finally {
-      setBusyTarget(null);
-    }
-  };
-
-  const runRemove = async (keepLocal: boolean) => {
-    setRemoveOpen(false);
-    setBusyTarget("remove");
-    try {
-      const deleted = await api.purgeCloudData(keepLocal);
-      window.alert(
-        keepLocal
-          ? t("settings.data.removeDeviceDialog.doneKeepLocal", {
-              count: deleted,
-            })
-          : t("settings.data.removeDeviceDialog.doneAlsoClear", {
-              count: deleted,
-            }),
-      );
       refreshStorage();
     } catch (e) {
       logError("data.clear", e);
@@ -236,7 +203,6 @@ export default function DataTab() {
           </button>
           <PurgeButton
             target="shots"
-            variant="neutral"
             busyTarget={busyTarget}
             busyLabel={t("settings.data.cleanup.purgeShotsBusy")}
             idleLabel={t("settings.data.cleanup.purgeShotsLabel")}
@@ -259,35 +225,10 @@ export default function DataTab() {
           </button>
           <PurgeButton
             target="db"
-            variant="neutral"
             busyTarget={busyTarget}
             busyLabel={t("settings.data.cleanup.purgeDbBusy")}
             idleLabel={t("settings.data.cleanup.purgeDbLabel")}
             onClick={() => setSimpleConfirm("db")}
-          />
-        </Row>
-      </Section>
-
-      {/* ───── Section 3：危险区（红/警示，不可逆，影响所有设备）───── */}
-      <Section
-        title={t("settings.data.danger.title")}
-        description={t("settings.data.danger.description")}
-        icon={AlertCircle}
-        tone="danger"
-      >
-        <Row
-          label={t("settings.data.danger.removeDeviceLabel")}
-          description={t("settings.data.danger.removeDeviceDescription")}
-          icon={Cloud}
-          tone="danger"
-        >
-          <PurgeButton
-            target="remove"
-            variant="danger"
-            busyTarget={busyTarget}
-            busyLabel={t("settings.data.danger.removeDeviceBusy")}
-            idleLabel={t("settings.data.danger.removeDeviceLabel")}
-            onClick={() => setRemoveOpen(true)}
           />
         </Row>
       </Section>
@@ -316,13 +257,6 @@ export default function DataTab() {
         onCancel={() => setSimpleConfirm(null)}
       />
 
-      {/* ───── 复杂确认弹窗：从云端移除本设备（radio + 打字确认）───── */}
-      <RemoveDeviceDialog
-        open={removeOpen}
-        onConfirm={runRemove}
-        onCancel={() => setRemoveOpen(false)}
-      />
-
       {/* ───── 导出使用数据（范围 / 粒度 / 格式配置）───── */}
       <ExportUsageDialog open={exportOpen} onClose={() => setExportOpen(false)} />
     </>
@@ -334,14 +268,12 @@ export default function DataTab() {
  *  三个按钮共享 busyTarget，互锁防并发。 */
 function PurgeButton({
   target,
-  variant,
   busyTarget,
   busyLabel,
   idleLabel,
   onClick,
 }: {
   target: PurgeTarget;
-  variant: "neutral" | "danger";
   busyTarget: PurgeTarget | null;
   busyLabel: string;
   idleLabel: string;
@@ -349,12 +281,8 @@ function PurgeButton({
 }) {
   const isBusy = busyTarget === target;
   const isLocked = busyTarget !== null && !isBusy;
-  const variantClass = variant === "danger" ? styles.dangerBtn : styles.neutralBtn;
-  const busyClass = isBusy
-    ? variant === "danger"
-      ? styles.dangerBtnBusy
-      : styles.neutralBtnBusy
-    : "";
+  const variantClass = styles.neutralBtn;
+  const busyClass = isBusy ? styles.neutralBtnBusy : "";
   return (
     <button
       type="button"

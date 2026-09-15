@@ -360,7 +360,7 @@ export default function DebugTab() {
     });
 
     const lines: string[] = ["---"];
-    lines.push(`title: Hindsight segment summaries · ${date}`);
+    lines.push(`title: SI Logit segment summaries · ${date}`);
     lines.push(`date: ${date}`);
     lines.push(`source: debug`);
     if (latestGeneratedAt) lines.push(`generated_at: ${latestGeneratedAt}`);

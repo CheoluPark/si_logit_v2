@@ -5,48 +5,31 @@
 import i18n from "i18next";
 import { initReactI18next } from "react-i18next";
 import { locale as osLocale } from "@tauri-apps/plugin-os";
-import zhCN from "./locales/zh-CN.json";
-import zhTW from "./locales/zh-TW.json";
 import en from "./locales/en.json";
-import ja from "./locales/ja.json";
-import ptBR from "./locales/pt-BR.json";
-import es from "./locales/es.json";
+import ko from "./locales/ko.json";
 
 export const LOCALE_STORAGE_KEY = "hindsight.locale";
-/** 兜底语言：系统 locale 无法识别 / 非 zh,ja 时用 en（比中文通用） */
 export const FALLBACK_LOCALE = "en";
 
-type Supported = "zh-CN" | "zh-TW" | "en" | "ja" | "pt-BR" | "es";
+type Supported = "en" | "ko";
 
-/** 把任意 BCP-47 locale 串映射到支持的六种之一 */
 function mapToSupported(loc: string | null | undefined): Supported {
   const l = (loc ?? "").toLowerCase();
-  // 繁体圈（台湾 / 香港 / 澳门 / 显式 Hant 脚本）→ 繁体；其余中文 → 简体
-  if (/^zh[-_]?(tw|hk|mo|hant)/.test(l)) return "zh-TW";
-  if (l.startsWith("zh")) return "zh-CN";
-  if (l.startsWith("ja")) return "ja";
-  if (l.startsWith("pt")) return "pt-BR";
-  // 西班牙语不分地区变体：es-ES / es-MX / es-419 等统一走同一份文案
-  if (l.startsWith("es")) return "es";
+  if (l.startsWith("ko")) return "ko";
   return "en";
 }
 
-// 同步 init：有存储值就用；没有先用兜底，等 ensureInitialLocale 异步纠正
 const stored = localStorage.getItem(LOCALE_STORAGE_KEY);
 
 void i18n.use(initReactI18next).init({
   resources: {
-    "zh-CN": { translation: zhCN },
-    "zh-TW": { translation: zhTW },
     en: { translation: en },
-    ja: { translation: ja },
-    "pt-BR": { translation: ptBR },
-    es: { translation: es },
+    ko: { translation: ko },
   },
+  supportedLngs: ["en", "ko"],
   lng: stored ?? FALLBACK_LOCALE,
   fallbackLng: FALLBACK_LOCALE,
   interpolation: {
-    // React 自带 XSS 防护，无需 i18next 再做转义
     escapeValue: false,
   },
 });

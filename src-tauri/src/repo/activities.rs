@@ -1,7 +1,7 @@
-//! `activities` 表的 repo 层：插入新会话、seal 会话写 outbox、清理过期截图。
+//! `activities` 表的 repo 层：插入新会话、seal 会话、清理过期截图。
 //!
 //! 一条 activities 行 = 一段连续焦点会话（同一应用 / 同一 URL）。
-//! 焦点切换时旧的 seal（写 outbox 推送），开新的（插入但不推 outbox，避免心跳级噪声）。
+//! 焦点切换时旧的 seal，开新的会话。
 
 use chrono::{DateTime, Duration, Local, TimeZone, Timelike, Utc};
 
@@ -13,7 +13,7 @@ use crate::repo::outbox::{enqueue, OutboxEntity, OutboxOp};
 use crate::storage::{utc_now_rfc3339, DbPool, SqliteResultExt};
 
 /// 创建一条新的会话记录。device_id = self；updated_at = captured_at；
-/// **不**写 outbox —— 用户明确要求只在会话结束 (seal) 时才推到云端。
+/// 不写旧版本同步 outbox；活动数据保持在本机数据库。
 /// `excluded`：忽略规则命中时为 true——行照常落库，仅不计入统计
 /// （本机元数据，不进 seal 的 outbox payload，不参与同步）。
 pub async fn insert_new(
@@ -325,16 +325,13 @@ pub async fn delete_screenshots_older_than(pool: &DbPool, retention_days: u32) -
 /// 副作用：
 /// - **本地 DELETE**：所有匹配的行直接删（不软删，本表没 deleted_at 列）。
 ///   pure 0 时长的行没数据价值，删了 day_apps SUM 不变（贡献本来就是 0）。
-/// - **触发 push 同步**：每个受影响的 local_date 入一个 outbox 行，下次 push tick
-///   走 [`crate::sync::engine::push::build_activities_day`] 全量重写当天 ndjson 到 Drive。
-///   对端 pull 收到 [`crate::sync::engine::pull::merge_activities`] 的 mirror 收敛
-///   逻辑（按 ndjson 内容 DELETE 不在的镜像行）→ 对端镜像里这些孤儿也自然消失。
+/// - 活动数据只保存在本地数据库；历史同步字段仍保留在 schema 中以兼容旧安装。
 ///
 /// 幂等：连续调两次，第二次 SELECT DISTINCT 找不到匹配行 → 返回 0，no-op。
 pub async fn purge_orphan_sessions(pool: &DbPool) -> Result<u64> {
     let device_id = device::self_id()?.to_string();
 
-    // 1. 找出受影响的 local_date 列表（每个独立的天需要一条 outbox 触发 push 重写）
+    // 1. 找出受影响的 local_date 列表（保留旧版本 outbox 的本地兼容行为）
     let local_dates: Vec<String> = pool
         .0
         .call({
@@ -362,7 +359,7 @@ pub async fn purge_orphan_sessions(pool: &DbPool) -> Result<u64> {
         return Ok(0);
     }
 
-    // 2. DELETE 一刀切 + 给每个受影响的 local_date 写一条 outbox（同一 conn / 同一事务）
+    // 2. DELETE 一刀切 + 给每个受影响的 local_date 写一条 legacy outbox（同一事务）
     let deleted = pool
         .0
         .call({
@@ -377,8 +374,6 @@ pub async fn purge_orphan_sessions(pool: &DbPool) -> Result<u64> {
                     )
                     .db()? as u64;
                 for date in &local_dates {
-                    // payload 只用 localDate 字段（push.group_outbox 解析它决定 ndjson 文件名）。
-                    // entity_pk 给 device_id 占位（NOT NULL 约束），不参与去重
                     let payload = serde_json::json!({ "localDate": date }).to_string();
                     enqueue(
                         conn,
@@ -395,7 +390,7 @@ pub async fn purge_orphan_sessions(pool: &DbPool) -> Result<u64> {
         .await?;
 
     log::info!(
-        "启动期清理孤儿 session：删 {} 行，触发 push 重写 {} 天",
+        "启动期清理孤儿 session：删 {} 行，记录 {} 天 legacy outbox",
         deleted,
         local_dates.len()
     );
