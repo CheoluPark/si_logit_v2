@@ -58,8 +58,8 @@ export default function WorkLogPage() {
       const cat = getCategory(s.categoryId);
       return {
         id: `act-${i}`,
-        appName: cat?.name ?? s.categoryId,
-        title: "",
+        appName: s.processName || cat?.name || s.categoryId,
+        title: s.windowTitle || "",
         startMs: new Date(s.startedAt).getTime(),
         endMs: new Date(s.endedAt).getTime(),
         superCategory: s.categoryId,

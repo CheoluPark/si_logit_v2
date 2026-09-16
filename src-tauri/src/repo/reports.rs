@@ -143,6 +143,8 @@ pub struct TimelineSession {
     pub started_at: String,
     pub ended_at: String,
     pub category_id: String,
+    pub process_name: String,
+    pub window_title: String,
 }
 
 /// 拉指定本地日期的原始活动会话，不做时长或分类聚合。
@@ -174,7 +176,7 @@ pub async fn timeline_sessions(
         .0
         .call(move |conn| {
             let sql = format!(
-                "SELECT a.started_at, a.ended_at, COALESCE(c.id, 'other') AS cat
+                "SELECT a.started_at, a.ended_at, COALESCE(c.id, 'other') AS cat, a.process_name, a.window_title
                  {FROM_ACTIVITY_GROUP_CATEGORY}
                  WHERE julianday(a.started_at) < julianday(?)
                    AND julianday(a.ended_at) > julianday(?) {}
@@ -196,6 +198,8 @@ pub async fn timeline_sessions(
                         started_at: r.get(0)?,
                         ended_at: r.get(1)?,
                         category_id: r.get(2)?,
+                        process_name: r.get(3)?,
+                        window_title: r.get(4)?,
                     })
                 })
                 .db()?;

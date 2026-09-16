@@ -18,6 +18,8 @@ export interface TimelineSession {
   startedAt: string;
   endedAt: string;
   categoryId: string;
+  processName: string;
+  windowTitle: string;
 }
 
 export interface TimelineAppUsage {

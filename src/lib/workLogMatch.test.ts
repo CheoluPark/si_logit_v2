@@ -4,27 +4,43 @@ import {
   keywordMatch,
   generateWorkLog,
 } from "./workLogMatch";
-import type { WorkItem } from "../api/hindsight";
+import type { WorkItem, TimelineSession } from "../api/hindsight";
 
 // ── 2026-09-16 실제 활동 데이터 (hindsight.sqlite에서 추출) ──────────
 // startMs/endMs는 실제 DB의 started_at/ended_at (KST) 기준
 const T0 = new Date("2026-09-16T08:53:26+09:00").getTime();
 
-const todayActivities: DayActivity[] = [
-  { id: "a1", appName: "OpenCode", title: "OpenCode", startMs: T0, endMs: T0 + 45_000, superCategory: "dev" },
-  { id: "a2", appName: "OpenCode", title: "OpenCode", startMs: T0 + 45_000, endMs: T0 + 75_000, superCategory: "dev" },
-  { id: "a3", appName: "OpenCode", title: "OpenCode", startMs: T0 + 95_000, endMs: T0 + 115_000, superCategory: "dev" },
-  { id: "a4", appName: "Brave Browser", title: "CheoluPark/si_logit_v2 - Brave", startMs: T0 + 115_000, endMs: T0 + 120_000, superCategory: "comm" },
-  { id: "a5", appName: "Brave Browser", title: "Private New Tab - Brave", startMs: T0 + 120_000, endMs: T0 + 125_000, superCategory: "comm" },
-  { id: "a6", appName: "Everything", title: "Everything", startMs: T0 + 7_471_000, endMs: T0 + 7_496_000, superCategory: "util" },
-  { id: "a7", appName: "Brave Browser", title: "CheoluPark/si_logit_v2 - Brave", startMs: T0 + 7_506_000, endMs: T0 + 7_537_000, superCategory: "comm" },
-  { id: "a8", appName: "OpenCode", title: "OpenCode", startMs: T0 + 7_542_000, endMs: T0 + 7_547_000, superCategory: "dev" },
-  { id: "a9", appName: "Visual Studio Code", title: "README.md - Hindsight - Visual Studio Code", startMs: T0 + 7_547_000, endMs: T0 + 7_567_000, superCategory: "dev" },
-  { id: "a10", appName: "OpenCode", title: "OpenCode", startMs: T0 + 7_567_000, endMs: T0 + 7_582_000, superCategory: "dev" },
-  { id: "a11", appName: "Visual Studio Code", title: "DEVELOPMENT.md - Hindsight - Visual Studio Code", startMs: T0 + 7_587_000, endMs: T0 + 7_601_000, superCategory: "dev" },
-  { id: "a12", appName: "Visual Studio Code", title: "Preview DEVELOPMENT.md - Hindsight - Visual Studio Code", startMs: T0 + 20_340_000, endMs: T0 + 20_350_000, superCategory: "dev" },
-  { id: "a13", appName: "Brave Browser", title: "CheoluPark/si_logit_v2 - Brave", startMs: T0 + 20_350_000, endMs: T0 + 20_355_000, superCategory: "comm" },
+// TimelineSession 형태의 원본 데이터 (DB에서 오는 실제 형태)
+const rawSessions: TimelineSession[] = [
+  { startedAt: new Date(T0).toISOString(), endedAt: new Date(T0 + 45_000).toISOString(), categoryId: "dev", processName: "opencode", windowTitle: "OpenCode" },
+  { startedAt: new Date(T0 + 45_000).toISOString(), endedAt: new Date(T0 + 75_000).toISOString(), categoryId: "dev", processName: "opencode", windowTitle: "OpenCode" },
+  { startedAt: new Date(T0 + 95_000).toISOString(), endedAt: new Date(T0 + 115_000).toISOString(), categoryId: "dev", processName: "opencode", windowTitle: "OpenCode" },
+  { startedAt: new Date(T0 + 115_000).toISOString(), endedAt: new Date(T0 + 120_000).toISOString(), categoryId: "comm", processName: "brave", windowTitle: "CheoluPark/si_logit_v2 - Brave" },
+  { startedAt: new Date(T0 + 120_000).toISOString(), endedAt: new Date(T0 + 125_000).toISOString(), categoryId: "comm", processName: "brave", windowTitle: "Private New Tab - Brave" },
+  { startedAt: new Date(T0 + 7_471_000).toISOString(), endedAt: new Date(T0 + 7_496_000).toISOString(), categoryId: "util", processName: "Everything", windowTitle: "Everything" },
+  { startedAt: new Date(T0 + 7_506_000).toISOString(), endedAt: new Date(T0 + 7_537_000).toISOString(), categoryId: "comm", processName: "brave", windowTitle: "CheoluPark/si_logit_v2 - Brave" },
+  { startedAt: new Date(T0 + 7_542_000).toISOString(), endedAt: new Date(T0 + 7_547_000).toISOString(), categoryId: "dev", processName: "opencode", windowTitle: "OpenCode" },
+  { startedAt: new Date(T0 + 7_547_000).toISOString(), endedAt: new Date(T0 + 7_567_000).toISOString(), categoryId: "dev", processName: "code", windowTitle: "README.md - Hindsight - Visual Studio Code" },
+  { startedAt: new Date(T0 + 7_567_000).toISOString(), endedAt: new Date(T0 + 7_582_000).toISOString(), categoryId: "dev", processName: "opencode", windowTitle: "OpenCode" },
+  { startedAt: new Date(T0 + 7_587_000).toISOString(), endedAt: new Date(T0 + 7_601_000).toISOString(), categoryId: "dev", processName: "code", windowTitle: "DEVELOPMENT.md - Hindsight - Visual Studio Code" },
+  { startedAt: new Date(T0 + 20_340_000).toISOString(), endedAt: new Date(T0 + 20_350_000).toISOString(), categoryId: "dev", processName: "code", windowTitle: "Preview DEVELOPMENT.md - Hindsight - Visual Studio Code" },
+  { startedAt: new Date(T0 + 20_350_000).toISOString(), endedAt: new Date(T0 + 20_355_000).toISOString(), categoryId: "comm", processName: "brave", windowTitle: "CheoluPark/si_logit_v2 - Brave" },
 ];
+
+// WorkLogPage.tsx와 동일한 변환 로직: TimelineSession → DayActivity
+// appName: processName || categoryName || categoryId, title: windowTitle
+function toDayActivities(sessions: TimelineSession[]): DayActivity[] {
+  return sessions.map((s, i) => ({
+    id: `act-${i}`,
+    appName: s.processName || s.categoryId,
+    title: s.windowTitle || "",
+    startMs: new Date(s.startedAt).getTime(),
+    endMs: new Date(s.endedAt).getTime(),
+    superCategory: s.categoryId,
+  }));
+}
+
+const todayActivities = toDayActivities(rawSessions);
 
 // ── mock_work_items() (worklog.rs)와 동일한 테스트 Work Item ─────────
 const mockItems: WorkItem[] = [
@@ -68,13 +84,13 @@ describe("keywordMatch (실제 오늘 활동 데이터 기반)", () => {
     const matched = keywordMatch(mockItems[0].summary, todayActivities);
     expect(matched.length).toBeGreaterThan(0);
     // "logit"이 si_logit_v2 브라우저 탭에도 부분 매칭될 수 있음 — OpenCode 활동은 반드시 포함
-    expect(matched.some((a) => a.appName === "OpenCode")).toBe(true);
+    expect(matched.some((a) => a.appName === "opencode")).toBe(true);
   });
 
   it("MOCK-102: README/DEVELOPMENT 문서 편집 활동과 매칭", () => {
     const matched = keywordMatch(mockItems[1].summary, todayActivities);
     expect(matched.length).toBeGreaterThan(0);
-    expect(matched.every((a) => a.appName === "Visual Studio Code")).toBe(true);
+    expect(matched.every((a) => a.appName === "code")).toBe(true);
     expect(matched.some((a) => a.title.includes("README.md"))).toBe(true);
     expect(matched.some((a) => a.title.includes("DEVELOPMENT.md"))).toBe(true);
   });
@@ -91,6 +107,37 @@ describe("keywordMatch (실제 오늘 활동 데이터 기반)", () => {
   });
 });
 
+describe("TimelineSession → DayActivity 변환 후 매칭", () => {
+  it("processName/windowTitle이 빈 문자열이면 categoryId로 폴백", () => {
+    const fallback: TimelineSession[] = [
+      { startedAt: new Date(T0).toISOString(), endedAt: new Date(T0 + 1000).toISOString(), categoryId: "dev", processName: "", windowTitle: "" },
+    ];
+    const acts = toDayActivities(fallback);
+    expect(acts[0].appName).toBe("dev");
+    expect(acts[0].title).toBe("");
+  });
+
+  it("windowTitle이 있으면 keywordMatch에서 윈도우 제목으로 매칭", () => {
+    // windowTitle에 "si_logit_v2" 포함된 세션 → "si_logit" 키워드로 매칭
+    const matched = keywordMatch("si_logit 프로젝트 작업", todayActivities);
+    expect(matched.length).toBeGreaterThan(0);
+    expect(matched.every((a) => a.title.includes("si_logit_v2"))).toBe(true);
+  });
+
+  it("processName이 있으면 keywordMatch에서 appName으로 매칭", () => {
+    // "Everything" 프로세스명으로 매칭
+    const matched = keywordMatch("Everything 유틸리티 사용", todayActivities);
+    expect(matched.length).toBeGreaterThan(0);
+    expect(matched.some((a) => a.appName === "Everything")).toBe(true);
+  });
+
+  it("processName이 약어일 때도 매칭 (brave → Brave Browser 탭)", () => {
+    const matched = keywordMatch("Brave 브라우저 사용", todayActivities);
+    // "brave" processName이 appName으로 설정됨 → 키워드 매칭 확인
+    expect(matched.some((a) => a.appName === "brave")).toBe(true);
+  });
+});
+
 describe("generateWorkLog", () => {
   it("매칭 활동으로 워크로그 텍스트 생성", () => {
     const matched = keywordMatch(mockItems[1].summary, todayActivities);
@@ -98,7 +145,6 @@ describe("generateWorkLog", () => {
 
     expect(text).toContain(mockItems[1].summary);
     expect(text).toContain("수행 업무:");
-    expect(text).toContain("Visual Studio Code");
     expect(text).toContain("README.md");
     expect(text).toContain("DEVELOPMENT.md");
   });
