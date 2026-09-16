@@ -330,45 +330,24 @@
   font-size: 13px;
 }
 
-/* ---- Register Button ---- */
+/* ---- Copy Button ---- */
 
-.registerButton {
+.copyButton {
   display: inline-flex;
   align-items: center;
   gap: 6px;
   padding: 8px 16px;
-  background: transparent;
-  color: #14b8a6;
-  border: 1px solid #14b8a6;
+  border: 1px solid var(--color-border, #d1d5db);
   border-radius: 8px;
-  font-size: 13px;
-  font-weight: var(--font-weight-medium);
+  background: var(--color-bg, #ffffff);
+  color: var(--color-text, #374151);
   cursor: pointer;
-  transition: all 0.15s;
-  align-self: flex-end;
+  font-size: 14px;
+  transition: all 0.15s ease;
 }
 
-.registerButton:hover {
-  background: rgba(20, 184, 166, 0.08);
-}
-
-.registerButton:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
-}
-
-.registerButton svg {
-  width: 14px;
-  height: 14px;
-}
-
-.registeredButton {
-  background: rgba(20, 184, 166, 0.12);
-  color: #14b8a6;
-  border-color: transparent;
-  cursor: default;
-}
-
-.registeredButton:hover {
-  background: rgba(20, 184, 166, 0.12);
+.copyButton:hover {
+  background: var(--color-bg-hover, #f3f4f6);
+  border-color: var(--color-primary, #3b82f6);
+  color: var(--color-primary, #3b82f6);
 }

@@ -52,6 +52,45 @@ pub struct WorkLogResult {
     pub message: String,
 }
 
+/// Jira MCP URL 미설정 시 반환하는 테스트용 Work Item (매칭 검증용)
+fn mock_work_items() -> Vec<WorkItem> {
+    vec![
+        WorkItem {
+            key: "MOCK-101".into(),
+            summary: "SI Logit 프로젝트 개발 및 OpenCode 작업".into(),
+            status: "In Progress".into(),
+            assignee: "me".into(),
+            issue_type: "Work Item".into(),
+            background: "사내 폐쇄망 배포 전환에 따른 개발 작업".into(),
+            info: "OpenCode에서 작업 수행".into(),
+            objective: "SI Logit 기능 개발 완료".into(),
+            output: "개발 완료된 코드".into(),
+        },
+        WorkItem {
+            key: "MOCK-102".into(),
+            summary: "README 및 DEVELOPMENT 문서 작성".into(),
+            status: "In Progress".into(),
+            assignee: "me".into(),
+            issue_type: "Work Item".into(),
+            background: "프로젝트 문서화 필요".into(),
+            info: "Visual Studio Code에서 문서 편집".into(),
+            objective: "개발 가이드 문서 완성".into(),
+            output: "README.md, DEVELOPMENT.md".into(),
+        },
+        WorkItem {
+            key: "MOCK-103".into(),
+            summary: "GitHub 저장소 push 및 si_logit_v2 관리".into(),
+            status: "In Progress".into(),
+            assignee: "me".into(),
+            issue_type: "Work Item".into(),
+            background: "코드 원격 저장소 반영 필요".into(),
+            info: "GitHub 저장소 확인".into(),
+            objective: "최신 코드 push 완료".into(),
+            output: "si_logit_v2 저장소 최신화".into(),
+        },
+    ]
+}
+
 /// MCP streamable HTTP 클라이언트: initialize → tools/call → 파싱
 #[tauri::command]
 pub async fn fetch_work_items(pool: State<'_, DbPool>) -> Result<Vec<WorkItem>, String> {
@@ -59,10 +98,8 @@ pub async fn fetch_work_items(pool: State<'_, DbPool>) -> Result<Vec<WorkItem>, 
     let jira_cfg = &cfg.ai.jira_mcp;
 
     if jira_cfg.url.trim().is_empty() {
-        return Err(
-            "Jira MCP URL이 설정되지 않았습니다. AI 설정 → Jira MCP 탭에서 설정하세요."
-                .into(),
-        );
+        // Jira 미연결: 매칭 검증용 mock 데이터 반환
+        return Ok(mock_work_items());
     }
 
     let client = reqwest::Client::builder()

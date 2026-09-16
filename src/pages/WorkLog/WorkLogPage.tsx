@@ -1,34 +1,28 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { ClipboardList, RefreshCw, Send, Check } from "lucide-react";
+import { ClipboardList, RefreshCw, Copy, Check } from "lucide-react";
 import {
   api,
   type WorkItem,
-  type WorkLogDraft,
   type TimelineSession,
 } from "../../api/hindsight";
 import { useCategories } from "../../state/categories";
+import {
+  type DayActivity,
+  formatTime,
+  keywordMatch,
+  generateWorkLog,
+} from "../../lib/workLogMatch";
 import styles from "./WorkLogPage.module.css";
 
 /* ------------------------------------------------------------------ */
 /*  Types                                                              */
 /* ------------------------------------------------------------------ */
 
-interface DayActivity {
-  id: string;
-  appName: string;
-  title: string;
-  startMs: number;
-  endMs: number;
-  superCategory: string;
-}
-
 interface MappingState {
   workLogText: string;
   startedAt: string; // local datetime-local value: "YYYY-MM-DDTHH:MM"
   endedAt: string;
-  status: "idle" | "registering" | "registered" | "error";
-  error?: string;
 }
 
 /* ------------------------------------------------------------------ */
@@ -44,44 +38,6 @@ function toLocalDatetime(d: Date): string {
   return `${y}-${m}-${day}T${h}:${min}`;
 }
 
-function toIso(dt: string): string {
-  if (!dt) return new Date().toISOString();
-  const d = new Date(dt);
-  return Number.isNaN(d.getTime()) ? new Date().toISOString() : d.toISOString();
-}
-
-function formatTime(ms: number): string {
-  return new Date(ms).toLocaleTimeString([], {
-    hour: "2-digit",
-    minute: "2-digit",
-  });
-}
-
-function keywordMatch(itemSummary: string, activities: DayActivity[]): DayActivity[] {
-  const keywords = itemSummary
-    .toLowerCase()
-    .split(/[\s\-_/,.;:()[\]{}]+/)
-    .filter((w) => w.length >= 3);
-
-  if (keywords.length === 0) return [];
-
-  return activities.filter((act) => {
-    const haystack = `${act.appName} ${act.title}`.toLowerCase();
-    return keywords.some((kw) => haystack.includes(kw));
-  });
-}
-
-function generateWorkLog(item: WorkItem, matched: DayActivity[]): string {
-  if (matched.length === 0) return "";
-  const sorted = [...matched].sort((a, b) => a.startMs - b.startMs);
-  const lines = sorted.map((act) => {
-    const start = formatTime(act.startMs);
-    const end = formatTime(act.endMs);
-    return `  - ${act.appName}: ${act.title || "(no title)"} (${start}~${end})`;
-  });
-  return `${item.summary}\n\n수행 업무:\n${lines.join("\n")}`;
-}
-
 /* ------------------------------------------------------------------ */
 /*  Component                                                          */
 /* ------------------------------------------------------------------ */
@@ -94,6 +50,7 @@ export default function WorkLogPage() {
   const [fetching, setFetching] = useState(false);
   const [sessions, setSessions] = useState<TimelineSession[]>([]);
   const [mappings, setMappings] = useState<Record<string, MappingState>>({});
+  const [copiedKey, setCopiedKey] = useState<string | null>(null);
 
   /* ---- Derive DayActivity[] from sessions + category names ---- */
   const dayActivities = useMemo<DayActivity[]>(() => {
@@ -151,7 +108,6 @@ export default function WorkLogPage() {
           workLogText: generateWorkLog(item, matched),
           startedAt: toLocalDatetime(new Date(startMs)),
           endedAt: toLocalDatetime(new Date(endMs)),
-          status: "idle",
         };
       }
       setMappings(next);
@@ -161,47 +117,6 @@ export default function WorkLogPage() {
       setFetching(false);
     }
   }, [dayActivities]);
-
-  /* ---- Register a single work item ---- */
-  const handleRegister = useCallback(
-    async (item: WorkItem) => {
-      const mapping = mappings[item.key];
-      if (!mapping) return;
-
-      setMappings((prev) => ({
-        ...prev,
-        [item.key]: { ...prev[item.key], status: "registering" },
-      }));
-
-      try {
-        const draft: WorkLogDraft = {
-          workItemKey: item.key,
-          summary: mapping.workLogText,
-          startedAt: toIso(mapping.startedAt),
-          endedAt: toIso(mapping.endedAt),
-        };
-        const result = await api.registerWorkLog(draft);
-        setMappings((prev) => ({
-          ...prev,
-          [item.key]: {
-            ...prev[item.key],
-            status: result.success ? "registered" : "error",
-            error: result.success ? undefined : result.message,
-          },
-        }));
-      } catch (err) {
-        setMappings((prev) => ({
-          ...prev,
-          [item.key]: {
-            ...prev[item.key],
-            status: "error",
-            error: err instanceof Error ? err.message : String(err),
-          },
-        }));
-      }
-    },
-    [mappings],
-  );
 
   /* ---- Update a mapping field ---- */
   const updateMapping = useCallback(
@@ -213,11 +128,6 @@ export default function WorkLogPage() {
     },
     [],
   );
-
-  /* ---- Derived states ---- */
-  const allRegistered =
-    workItems.length > 0 &&
-    workItems.every((item) => mappings[item.key]?.status === "registered");
 
   /* ---- Render ---- */
   return (
@@ -252,25 +162,13 @@ export default function WorkLogPage() {
         <div className={styles.emptyState}>{t("workLog.noItems")}</div>
       )}
 
-      {/* All registered banner */}
-      {allRegistered && (
-        <div className={styles.successBanner}>
-          <Check size={16} />
-          {t("workLog.allItemsRegistered")}
-        </div>
-      )}
-
       {/* Work item cards */}
       {workItems.map((item) => {
         const mapping = mappings[item.key];
         const matched = matchedByItem.get(item.key) ?? [];
-        const isRegistered = mapping?.status === "registered";
 
         return (
-          <div
-            key={item.key}
-            className={`${styles.itemCard} ${isRegistered ? styles.itemCardRegistered : ""}`}
-          >
+          <div key={item.key} className={styles.itemCard}>
             {/* Header */}
             <div className={styles.itemHeader}>
               <span className={styles.itemKey}>{item.key}</span>
@@ -388,28 +286,27 @@ export default function WorkLogPage() {
               </div>
             </div>
 
-            {/* Error message */}
-            {mapping?.status === "error" && mapping.error && (
-              <div className={styles.errorText}>{mapping.error}</div>
-            )}
-
-            {/* Register button */}
+            {/* Copy button */}
             <button
-              className={`${styles.registerButton} ${isRegistered ? styles.registeredButton : ""}`}
-              onClick={() => handleRegister(item)}
-              disabled={isRegistered || mapping?.status === "registering"}
+              className={styles.copyButton}
+              onClick={() => {
+                const text = mapping?.workLogText ?? "";
+                if (text) {
+                  navigator.clipboard.writeText(text);
+                  setCopiedKey(item.key);
+                  setTimeout(() => setCopiedKey(null), 2000);
+                }
+              }}
             >
-              {mapping?.status === "registering" ? (
-                t("workLog.registering")
-              ) : isRegistered ? (
+              {copiedKey === item.key ? (
                 <>
                   <Check size={14} />
-                  {t("workLog.registered")}
+                  {t("workLog.copied")}
                 </>
               ) : (
                 <>
-                  <Send size={14} />
-                  {t("workLog.register")}
+                  <Copy size={14} />
+                  {t("workLog.copy")}
                 </>
               )}
             </button>
