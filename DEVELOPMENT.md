@@ -56,14 +56,14 @@ impl Default for AiConfig {
 
 **파일**: `src-tauri/src/commands/worklog.rs`
 
-| 함수 | 행 | 상태 | 역할 |
-|------|-----|------|------|
-| `fetch_work_items` | 약 53행 | **PLACEHOLDER** | Jira에서 현재 사용자의 활성 Work Item 목록 가져오기 |
-| `register_work_log` | 약 111행 | **PLACEHOLDER** | Jira에 워크로그 등록 |
+| 함수 | 상태 | 역할 |
+|------|------|------|
+| `fetch_work_items` | **구현 완료** (MCP streamable HTTP) | Jira에서 현재 사용자의 활성 Work Item 목록 가져오기 (`searchJiraIssues`) |
+| `register_work_log` | **PLACEHOLDER** | Jira에 워크로그 등록 |
 
 ### 구현 시 참고사항
 
-1. **Jira 설정 읽기**: 두 함수 모두 `Settings.ai.jira_mcp`에서 설정을 읽어야 합니다.
+1. **Jira 설정 읽기**: `Settings.ai.jira_mcp`에서 설정을 읽습니다.
 
    ```rust
    let cfg = crate::repo::settings::load(&pool).await?;
@@ -73,14 +73,20 @@ impl Default for AiConfig {
    - `JiraMcpConfig` 구조체: `src-tauri/src/ai/config.rs` (58행)
    - 설정 저장: SQLite `settings_store` 단일행 JSON BLOB (`Settings.ai.jira_mcp`)
 
-2. **PLACEHOLDER 주석**: 각 함수 위에 실제 MCP 호출 예시가 주석으로 적혀 있습니다.
-   - 회사 MCP 서버의 실제 함수명/프로토콜을 확인 후 교체하세요.
-   - `reqwest`는 이미 의존성에 포함되어 있습니다.
+2. **MCP 호출 흐름** (`fetch_work_items` 구현 완료):
+   - `initialize` → `notifications/initialized` → `tools/call searchJiraIssues`
+   - JQL: `issuetype = "Work Item" AND assignee = currentUser() AND statusCategory != Done`
+   - 응답: `result.content[0].text` JSON → `data` 배열 → `WorkItem` 변환
+   - 커스텀 필드: `customfield_13548`(작업 배경), `customfield_13549`(필요 정보),
+     `customfield_13550`(작업 목표), `customfield_13551`(산출물)
+   - JSON / SSE(`text/event-stream`) 응답 모두 처리, `Mcp-Session-Id` 헤더 처리
+   - `register_work_log`는 아직 PLACEHOLDER — 회사 MCP 서버의 실제 워크로그 등록 툴 확인 후 교체 필요
 
 3. **프런트엔드 연결** (변경 불필요, 이미 배선됨):
    - `src/api/hindsight.ts` — `fetchWorkItems()` (1189행), `registerWorkLog()` (1191행)
    - `src/pages/WorkLog/WorkLogPage.tsx` — 호출부 (135행, 183행)
 
-4. **배포 시 기본값 오버라이드**: `scripts/offline/preset.example.json`을 exe 옆 `preset.json`으로 두면
+4. **배포 시 기본값 오버라이드**: exe 옆에 `preset.json`(부분 Settings JSON, camelCase)을 두면
    첫 실행 시 설정에 자동 병합됩니다 (Jira URL/PAT, 모델 경로 등 사내 폐쇄망 맞춤 설정용).
-   상세: `scripts/offline/README.md` 참고.
+   적용 후 `preset.json` → `preset.applied.json`으로 변경됩니다.
+   구현: `src-tauri/src/repo/settings.rs`의 `apply_preset_if_present`.

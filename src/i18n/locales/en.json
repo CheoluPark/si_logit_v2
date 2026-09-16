@@ -1737,6 +1737,10 @@
     "startDate": "Start",
     "endDate": "End",
     "placeholder": "Enter work log description...",
-    "allItemsRegistered": "All work logs registered"
+    "allItemsRegistered": "All work logs registered",
+    "background": "Background",
+    "info": "Required Info",
+    "objective": "Objective",
+    "output": "Output"
   }
 }

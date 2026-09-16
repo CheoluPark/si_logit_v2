@@ -100,7 +100,3 @@ scripts/shots/*.win.json
 
 # Local deepwork state
 .slim/deepwork/
-
-# Offline deploy artifacts
-offline-bundle/
-deploy/

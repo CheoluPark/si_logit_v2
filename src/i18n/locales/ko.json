@@ -1736,6 +1736,10 @@
     "startDate": "시작",
     "endDate": "종료",
     "placeholder": "작업일지 설명을 입력하세요...",
-    "allItemsRegistered": "모든 작업일지가 등록되었습니다"
+    "allItemsRegistered": "모든 작업일지가 등록되었습니다",
+    "background": "작업 배경",
+    "info": "필요 정보",
+    "objective": "작업 목표",
+    "output": "산출물"
   }
 }

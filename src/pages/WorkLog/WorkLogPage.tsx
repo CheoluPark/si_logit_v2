@@ -287,6 +287,36 @@ export default function WorkLogPage() {
               )}
             </div>
 
+            {/* Custom fields */}
+            {(item.background || item.info || item.objective || item.output) && (
+              <div className={styles.customFields}>
+                {item.background && (
+                  <div className={styles.customField}>
+                    <span className={styles.customFieldLabel}>{t("workLog.background")}</span>
+                    <span className={styles.customFieldValue}>{item.background}</span>
+                  </div>
+                )}
+                {item.info && (
+                  <div className={styles.customField}>
+                    <span className={styles.customFieldLabel}>{t("workLog.info")}</span>
+                    <span className={styles.customFieldValue}>{item.info}</span>
+                  </div>
+                )}
+                {item.objective && (
+                  <div className={styles.customField}>
+                    <span className={styles.customFieldLabel}>{t("workLog.objective")}</span>
+                    <span className={styles.customFieldValue}>{item.objective}</span>
+                  </div>
+                )}
+                {item.output && (
+                  <div className={styles.customField}>
+                    <span className={styles.customFieldLabel}>{t("workLog.output")}</span>
+                    <span className={styles.customFieldValue}>{item.output}</span>
+                  </div>
+                )}
+              </div>
+            )}
+
             {/* Matched activities */}
             <div>
               <div className={styles.sectionLabel}>

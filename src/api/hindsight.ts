@@ -759,13 +759,21 @@ export interface MemoryPendingStats {
   digestRunning: boolean;
 }
 
-/** MCP Work Item placeholder — mirrors Rust WorkItem struct */
+/** MCP Work Item — mirrors Rust WorkItem struct */
 export interface WorkItem {
   key: string;
   summary: string;
   status: string;
   assignee: string;
   issueType: string;
+  /** 작업 배경 (customfield_13548) */
+  background: string;
+  /** 작업 수행 필요 정보 (customfield_13549) */
+  info: string;
+  /** 작업 목표 (customfield_13550) */
+  objective: string;
+  /** 산출물 (customfield_13551) */
+  output: string;
 }
 
 /** Draft for registering a work log entry */
