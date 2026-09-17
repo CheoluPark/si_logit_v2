@@ -787,8 +787,9 @@
       "defaults": {
         "work": "Work",
         "play": "Entertainment",
-        "social": "Social",
+        "social": "Chat",
         "browse": "Browsing",
+      "office": "Office",
         "off_pc": "Off-PC Work"
       },
       "orphanLabel": "Ungrouped",
@@ -804,12 +805,12 @@
     "defaults": {
       "code": "Coding",
       "browse": "Browsing",
-      "talk": "Social",
+      "talk": "Chat",
       "design": "Design",
       "fun": "Entertainment",
       "other": "Other",
       "hidden": "Hidden",
-      "office": "Office",
+      "office": "Document work",
       "workchat": "Work chat",
       "game": "Games",
       "video": "Media",
@@ -956,6 +957,21 @@
         "download": "Download component",
         "uninstallConfirmTitle": "Uninstall the text recognition (OCR) component?",
         "uninstallConfirmMessage": "Screen-text indexing will be unavailable until you download it again. Existing indexes are unaffected."
+      },
+      "testErrors": {
+        "emptyEndpoint": "Service address is empty",
+        "clientBuild": "Failed to create HTTP client",
+        "timeout": "Request timed out",
+        "connect": "Connection failed — make sure the service is running and the port is correct",
+        "request": "Failed to construct request",
+        "network": "Network error",
+        "httpStatus": "Service returned an error",
+        "parse": "Failed to read or parse the response",
+        "emptyChat": "Service address or model ID is empty",
+        "noModelSelected": "Select a model in the Models tab before starting the engine",
+        "mainMissing": "Selected main model file not found",
+        "mmprojMissing": "Selected vision projector file not found",
+        "binaryMissing": "AI engine not installed — download it first"
       }
     },
     "summaryParams": {
@@ -1724,6 +1740,8 @@
     "editWorkLog": "Edit Work Log",
     "matchedActivities": "Matched Activities",
     "noActivities": "No matching activities found",
+    "showMore": "Show more",
+    "showLess": "Show less",
     "timeRange": "Time Range",
     "workItem": "Work Item",
     "status": "Status",
@@ -1737,6 +1755,18 @@
     "background": "Background",
     "info": "Required Info",
     "objective": "Objective",
-    "output": "Output"
+    "output": "Output",
+    "analyze": "AI Analyze",
+    "analyzing": "Analyzing...",
+    "viewActivities": "View Matched Activities",
+    "totalTime": "Total Time",
+    "dateNav": {
+      "today": "Today",
+      "yesterday": "Yesterday",
+      "daysAgo": "{{count}} days ago",
+      "daysLater": "{{count}} days later",
+      "prevAria": "Previous day",
+      "nextAria": "Next day"
+    }
   }
 }

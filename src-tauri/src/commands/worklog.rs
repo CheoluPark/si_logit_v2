@@ -1,8 +1,14 @@
+use std::sync::Arc;
+
+use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use tauri::State;
 
+use crate::ai::server::EngineSupervisor;
+use crate::commands::screen_memory::MemoryState;
+use crate::memory::MemoryDb;
 use crate::repo::settings;
-use crate::storage::DbPool;
+use crate::storage::{DbPool, SqliteResultExt};
 
 // JQL: 현재 사용자에게 할당된 미완료 Work Item 조회
 const JQL: &str =
@@ -52,45 +58,6 @@ pub struct WorkLogResult {
     pub message: String,
 }
 
-/// Jira MCP URL 미설정 시 반환하는 테스트용 Work Item (매칭 검증용)
-fn mock_work_items() -> Vec<WorkItem> {
-    vec![
-        WorkItem {
-            key: "MOCK-101".into(),
-            summary: "SI Logit 프로젝트 개발 및 OpenCode 작업".into(),
-            status: "In Progress".into(),
-            assignee: "me".into(),
-            issue_type: "Work Item".into(),
-            background: "사내 폐쇄망 배포 전환에 따른 개발 작업".into(),
-            info: "OpenCode에서 작업 수행".into(),
-            objective: "SI Logit 기능 개발 완료".into(),
-            output: "개발 완료된 코드".into(),
-        },
-        WorkItem {
-            key: "MOCK-102".into(),
-            summary: "README 및 DEVELOPMENT 문서 작성".into(),
-            status: "In Progress".into(),
-            assignee: "me".into(),
-            issue_type: "Work Item".into(),
-            background: "프로젝트 문서화 필요".into(),
-            info: "Visual Studio Code에서 문서 편집".into(),
-            objective: "개발 가이드 문서 완성".into(),
-            output: "README.md, DEVELOPMENT.md".into(),
-        },
-        WorkItem {
-            key: "MOCK-103".into(),
-            summary: "GitHub 저장소 push 및 si_logit_v2 관리".into(),
-            status: "In Progress".into(),
-            assignee: "me".into(),
-            issue_type: "Work Item".into(),
-            background: "코드 원격 저장소 반영 필요".into(),
-            info: "GitHub 저장소 확인".into(),
-            objective: "최신 코드 push 완료".into(),
-            output: "si_logit_v2 저장소 최신화".into(),
-        },
-    ]
-}
-
 /// MCP streamable HTTP 클라이언트: initialize → tools/call → 파싱
 #[tauri::command]
 pub async fn fetch_work_items(pool: State<'_, DbPool>) -> Result<Vec<WorkItem>, String> {
@@ -98,8 +65,7 @@ pub async fn fetch_work_items(pool: State<'_, DbPool>) -> Result<Vec<WorkItem>, 
     let jira_cfg = &cfg.ai.jira_mcp;
 
     if jira_cfg.url.trim().is_empty() {
-        // Jira 미연결: 매칭 검증용 mock 데이터 반환
-        return Ok(mock_work_items());
+        return Err("Jira MCP 서버 URL이 설정되지 않았습니다. AI 설정 → Jira MCP에서 URL과 PAT를 입력하세요.".into());
     }
 
     let client = reqwest::Client::builder()
@@ -361,4 +327,226 @@ pub async fn register_work_log(draft: WorkLogDraft) -> Result<WorkLogResult, Str
         success: true,
         message: format!("Work log registered for {} (placeholder)", draft.work_item_key),
     })
+}
+
+// ────────────────── generate_work_description ──────────────────
+
+/// epoch ms → "HH:MM" 로컬 시각 문자열 (프롬프트 표시용).
+fn epoch_ms_to_hm(ms: i64) -> String {
+    let secs = ms / 1000;
+    let nsecs = ((ms % 1000) * 1_000_000) as u32;
+    let dt: DateTime<Utc> = DateTime::from_timestamp(secs, nsecs)
+        .unwrap_or_default();
+    dt.format("%H:%M").to_string()
+}
+
+/// epoch ms → RFC3339 문자열 (DB 쿼리 비교용).
+fn epoch_ms_to_rfc3339(ms: i64) -> String {
+    let secs = ms / 1000;
+    let nsecs = ((ms % 1000) * 1_000_000) as u32;
+    let dt: DateTime<Utc> = DateTime::from_timestamp(secs, nsecs)
+        .unwrap_or_default();
+    dt.to_rfc3339()
+}
+
+/// MemoryDb의 text_sessions에서 해당 시간 범위에 겹치는 OCR 텍스트를 조회.
+async fn query_ocr_text(
+    mem: &MemoryDb,
+    date: &str,
+    start_ms: i64,
+    end_ms: i64,
+) -> Result<String, String> {
+    let start_rfc = epoch_ms_to_rfc3339(start_ms);
+    let end_rfc = epoch_ms_to_rfc3339(end_ms);
+    let date = date.to_string();
+    mem.0
+        .call(move |conn| {
+            let mut stmt = conn
+                .prepare(
+                    "SELECT text FROM text_sessions
+                     WHERE local_date = ?1
+                       AND started_ts < ?3
+                       AND ended_ts > ?2
+                     ORDER BY started_ts ASC",
+                )
+                .db()?;
+            let texts: Vec<String> = stmt
+                .query_map(rusqlite::params![date, start_rfc, end_rfc], |r| r.get(0))
+                .db()?
+                .filter_map(|r| r.ok())
+                .filter(|t: &String| !t.trim().is_empty())
+                .collect();
+            Ok(texts.join("\n---\n"))
+        })
+        .await
+        .map_err(|e| e.to_string())
+}
+
+/// activities 테이블에서 해당 시간 범위의 process_name + window_title을 조회 (fallback).
+async fn query_activities_fallback(
+    pool: &DbPool,
+    date: &str,
+    start_ms: i64,
+    end_ms: i64,
+) -> Result<String, String> {
+    let start_rfc = epoch_ms_to_rfc3339(start_ms);
+    let end_rfc = epoch_ms_to_rfc3339(end_ms);
+    let date = date.to_string();
+    pool.0
+        .call(move |conn| {
+            let mut stmt = conn
+                .prepare(
+                    "SELECT process_name, window_title FROM activities
+                     WHERE local_date = ?1
+                       AND started_at < ?3
+                       AND ended_at > ?2
+                     ORDER BY started_at ASC",
+                )
+                .db()?;
+            let rows: Vec<(String, String)> = stmt
+                .query_map(rusqlite::params![date, start_rfc, end_rfc], |r| {
+                    Ok((r.get::<_, String>(0)?, r.get::<_, String>(1).unwrap_or_default()))
+                })
+                .db()?
+                .filter_map(|r| r.ok())
+                .collect();
+            // 중복 제거: 같은 (process_name, window_title) 쌍은 한 번만
+            let mut seen = std::collections::HashSet::new();
+            let unique: Vec<String> = rows
+                .into_iter()
+                .filter_map(|(proc, title)| {
+                    let key = format!("{proc}|{title}");
+                    if seen.insert(key) {
+                        let mut s = proc;
+                        if !title.is_empty() {
+                            s.push_str(" — ");
+                            s.push_str(&title);
+                        }
+                        Some(s)
+                    } else {
+                        None
+                    }
+                })
+                .collect();
+            Ok(unique.join("\n"))
+        })
+        .await
+        .map_err(|e| e.to_string())
+}
+
+/// LLM 프롬프트를 빌드한다 (단위 테스트 가능).
+fn build_description_prompt(
+    date: &str,
+    start_ms: i64,
+    end_ms: i64,
+    summary: &str,
+    context_text: &str,
+) -> (String, String) {
+    let system = "다음은 스크린샷 OCR 텍스트와 창 제목이다. \
+        사용자가 수행한 작업을 구체적인 문장으로 1~3개 요약하라. \
+        예: 'ACU 기능 시험 보고서 작성'. \
+        활동 나열 금지, 총 수행시간 언급 금지, 마크다운 금지, 평문만.".to_string();
+
+    let time_range = format!("{} ~ {}", epoch_ms_to_hm(start_ms), epoch_ms_to_hm(end_ms));
+    let user_text = format!(
+        "날짜: {date}\n시간범위: {time_range}\n작업 요약: {summary}\n\n\
+         스크린샷 OCR 텍스트 및 창 제목:\n{context_text}"
+    );
+    (system, user_text)
+}
+
+/// Work Log 페이지에서 "스크린샷 분석 기반 구체적 작업 묘사"를 생성한다.
+///
+/// 1. MemoryDb text_sessions에서 해당 시간대 OCR 텍스트를 조회
+/// 2. 없으면 main DbPool activities에서 process_name + window_title을 fallback
+/// 3. LLM에 프롬프트를 넣어 구체적 작업 묘사를 생성
+#[tauri::command]
+pub async fn generate_work_description(
+    pool: State<'_, DbPool>,
+    mem: State<'_, MemoryState>,
+    supervisor: State<'_, Arc<EngineSupervisor>>,
+    date: String,
+    start_ms: i64,
+    end_ms: i64,
+    summary: String,
+) -> Result<String, String> {
+    // 1. OCR 텍스트 조회 (MemoryDb)
+    let context_text = if let Some(ref mem_db) = mem.0 {
+        let ocr = query_ocr_text(mem_db, &date, start_ms, end_ms).await?;
+        if !ocr.is_empty() {
+            ocr
+        } else {
+            // fallback: activities
+            query_activities_fallback(&pool, &date, start_ms, end_ms).await?
+        }
+    } else {
+        // MemoryDb 불가: activities fallback only
+        query_activities_fallback(&pool, &date, start_ms, end_ms).await?
+    };
+
+    if context_text.trim().is_empty() {
+        return Err(" 해당 시간대에 스크린샷 OCR 텍스트 또는 활동 기록이 없습니다.".into());
+    }
+
+    // 2. 프롬프트 빌드
+    let (system, user_text) = build_description_prompt(&date, start_ms, end_ms, &summary, &context_text);
+
+    // 3. LLM 호출 (기존 infra 재사용)
+    let cfg = settings::load(&pool).await.map_err(String::from)?;
+    let ai = &cfg.ai;
+    let step2 = if ai.summary_use_cloud() {
+        crate::ai::summary_operations::build_step2(ai, 0, "")
+            .map_err(|e| e.to_string())?
+    } else {
+        let st = supervisor.status().await;
+        let port = st.port.ok_or_else(|| {
+            "LLM 엔진이 실행 중이지 않습니다. 엔진을 먼저 시작하세요.".to_string()
+        })?;
+        crate::ai::summary_operations::build_step2(ai, port, ai.effective_summary_main())
+            .map_err(|e| e.to_string())?
+    };
+
+    let (content, _usage) = step2
+        .chat(&system, &user_text, &[])
+        .await
+        .map_err(|e| e.to_string())?;
+
+    Ok(content)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn build_description_prompt_includes_all_fields() {
+        let (sys, usr) = build_description_prompt(
+            "2026-09-17",
+            1_726_545_600_000,  // epoch ms
+            1_726_549_200_000,
+            "ACU 기능 시험",
+            "Visual Studio Code — main.rs\nChrome — Jira 보고서",
+        );
+        assert!(sys.contains("OCR"));
+        assert!(sys.contains("평문만"));
+        assert!(usr.contains("2026-09-17"));
+        assert!(usr.contains("ACU 기능 시험"));
+        assert!(usr.contains("Visual Studio Code"));
+        assert!(usr.contains("Chrome"));
+    }
+
+    #[test]
+    fn epoch_ms_to_hm_returns_hhmm() {
+        // 2024-01-01T09:00:00Z = 1704099600000
+        let hm = epoch_ms_to_hm(1_704_099_600_000);
+        assert_eq!(hm, "09:00");
+    }
+
+    #[test]
+    fn epoch_ms_to_rfc3339_roundtrips() {
+        let ms = 1_726_544_400_000i64;
+        let rfc = epoch_ms_to_rfc3339(ms);
+        assert!(rfc.contains("2024"));
+        assert!(rfc.contains("T"));
+    }
 }

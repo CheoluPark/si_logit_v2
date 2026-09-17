@@ -825,7 +825,7 @@
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  max-width: 110px;
+  max-width: 160px;
 }
 
 /* 「取消分类」选项：灰底，没有色点 */

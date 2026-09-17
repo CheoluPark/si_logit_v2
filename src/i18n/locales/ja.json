@@ -696,8 +696,9 @@
       "defaults": {
         "work": "仕事",
         "play": "娯楽",
-        "social": "ソーシャル",
-        "browse": "ブラウジング"
+        "social": "チャット",
+        "browse": "ブラウジング",
+        "office": "事務"
       },
       "orphanLabel": "未グループ",
       "catCount": "{{count}} 件の分類",
@@ -712,7 +713,7 @@
     "defaults": {
       "code": "コーディング",
       "browse": "ブラウジング",
-      "talk": "コミュニケーション",
+      "talk": "チャット",
       "design": "デザイン",
       "fun": "エンタメ",
       "other": "その他",
@@ -854,14 +855,29 @@
         "idleCountdownMin": "{{min}} 分 {{sec}} 秒後に VRAM を解放"
       },
       "ocr": {
-        "name": "文字認識（OCR）コンポーネント",
-        "desc": "画面メモリの文字認識に使用；認識は GPU 上で実行されます（DirectML、内蔵 GPU 含む任意のグラフィックカード）。",
-        "macNativeBadge": "システム標準",
-        "macNativeDesc": "macOS はシステム標準の認識（Vision）を使用します——ダウンロードは不要です。",
-        "upgradeHint": "旧バージョンのコンポーネントを検出しました。再ダウンロードで GPU 加速にアップグレードできます。",
+        "name": "テキスト認識（OCR）コンポーネント",
+        "desc": "スクリーンメモリのテキスト認識に使用。GPU（DirectML、内蔵グラフィックス含むすべてのグラフィックカード）で動作します。",
+        "macNativeBadge": "システムネイティブ",
+        "macNativeDesc": "macOS は内蔵システム認識（Vision）を使用 — ダウンロード不要。",
+        "upgradeHint": "古いバージョンが検出されました。GPU アクセラレーションにアップグレードするには再ダウンロードしてください。",
         "download": "コンポーネントをダウンロード",
-        "uninstallConfirmTitle": "文字認識（OCR）コンポーネントをアンインストールしますか？",
-        "uninstallConfirmMessage": "アンインストール後は画面テキスト索引機能が使用できなくなります。再ダウンロードで復元できます。既存の索引には影響しません。"
+        "uninstallConfirmTitle": "テキスト認識（OCR）コンポーネントをアンインストールしますか？",
+        "uninstallConfirmMessage": "スクリーンショットのテキストインデックス作成は再ダウンロードするまで利用できません。既存のインデックスは影響を受けません。"
+      },
+      "testErrors": {
+        "emptyEndpoint": "サービスアドレスが空です",
+        "clientBuild": "HTTP クライアントの生成に失敗しました",
+        "timeout": "リクエストがタイムアウトしました",
+        "connect": "接続に失敗しました — サービスが起動しているか、ポートが正しいか確認してください",
+        "request": "リクエストの構築に失敗しました",
+        "network": "ネットワークエラー",
+        "httpStatus": "サービスからエラーが返されました",
+        "parse": "レスポンスの読み取り/解析に失敗しました",
+        "emptyChat": "サービスアドレスまたはモデル ID が空です",
+        "noModelSelected": "エンジンを起動する前に、モデルタブでモデルを選択してください",
+        "mainMissing": "選択したメインモデルファイルが見つかりません",
+        "mmprojMissing": "選択したビジョンプロジェクタファイルが見つかりません",
+        "binaryMissing": "AI エンジンがインストールされていません — まずダウンロードしてください"
       }
     },
     "summaryParams": {
@@ -1605,6 +1621,22 @@
     "scheduledOcr": {
       "title": "Hindsight",
       "body": "定時キャッチアップ OCR 開始:未処理スクリーンショット {{count}} 枚"
+    }
+  },
+  "workLog": {
+    "showMore": "もっと見る",
+    "showLess": "閉じる",
+    "analyze": "AI分析",
+    "analyzing": "分析中...",
+    "viewActivities": "マッチしたアクティビティを表示",
+    "totalTime": "合計時間",
+    "dateNav": {
+      "today": "今日",
+      "yesterday": "昨日",
+      "daysAgo": "{{count}}日前",
+      "daysLater": "{{count}}日後",
+      "prevAria": "前の日",
+      "nextAria": "次の日"
     }
   }
 }

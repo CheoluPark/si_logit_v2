@@ -47,4 +47,10 @@ describe("displaySuperCategoryName", () => {
       "categories.super.defaults.off_pc",
     );
   });
+
+  it("office 默认大类且未改名 → 走 i18n", () => {
+    expect(displaySuperCategoryName({ id: "office", name: "办公" }, t)).toBe(
+      "categories.super.defaults.office",
+    );
+  });
 });

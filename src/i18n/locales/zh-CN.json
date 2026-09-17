@@ -696,8 +696,9 @@
       "defaults": {
         "work": "工作",
         "play": "娱乐",
-        "social": "社交",
-        "browse": "浏览"
+        "social": "聊天",
+        "browse": "浏览",
+        "office": "办公"
       },
       "orphanLabel": "未归入大类",
       "catCount": "{{count}} 个分类",
@@ -712,7 +713,7 @@
     "defaults": {
       "code": "编程",
       "browse": "浏览",
-      "talk": "社交",
+      "talk": "聊天",
       "design": "设计",
       "fun": "娱乐",
       "other": "其他",
@@ -855,13 +856,28 @@
       },
       "ocr": {
         "name": "文字识别（OCR）组件",
-        "desc": "屏幕记忆的文字识别使用；识别在 GPU 上运行（DirectML，任意显卡含核显）。",
+        "desc": "屏幕记忆文字识别用，运行在 GPU 上（DirectML，任何显卡包括集显）。",
         "macNativeBadge": "系统原生",
-        "macNativeDesc": "macOS 使用系统原生识别（Vision），无需下载任何组件。",
-        "upgradeHint": "检测到旧版本组件，重新下载即可升级到 GPU 加速。",
+        "macNativeDesc": "macOS 使用内置系统识别（Vision）——无需下载。",
+        "upgradeHint": "检测到旧版组件，重新下载可升级到 GPU 加速。",
         "download": "下载组件",
         "uninstallConfirmTitle": "卸载文字识别（OCR）组件？",
-        "uninstallConfirmMessage": "卸载后屏幕文字索引功能不可用，重新下载即可恢复。已建立的索引不受影响。"
+        "uninstallConfirmMessage": "卸载后屏幕文字索引将不可用，需重新下载。已有索引不受影响。"
+      },
+      "testErrors": {
+        "emptyEndpoint": "服务地址为空",
+        "clientBuild": "HTTP 客户端构造失败",
+        "timeout": "请求超时",
+        "connect": "连接失败（确认服务是否启动、端口是否正确）",
+        "request": "请求构造失败",
+        "network": "网络错误",
+        "httpStatus": "服务返回错误",
+        "parse": "响应体读取/解析失败",
+        "emptyChat": "服务地址或模型 ID 为空",
+        "noModelSelected": "请先在「模型」里选一个模型，再启动引擎",
+        "mainMissing": "选中的主权重不存在",
+        "mmprojMissing": "选中的 vision 投影文件不存在",
+        "binaryMissing": "AI 引擎未安装，请先下载"
       }
     },
     "summaryParams": {
@@ -1605,6 +1621,22 @@
     "scheduledOcr": {
       "title": "Hindsight",
       "body": "定时补识别开始:{{count}} 张截图待处理"
+    }
+  },
+  "workLog": {
+    "showMore": "展开",
+    "showLess": "收起",
+    "analyze": "AI 分析",
+    "analyzing": "分析中...",
+    "viewActivities": "查看匹配的活动",
+    "totalTime": "总时间",
+    "dateNav": {
+      "today": "今天",
+      "yesterday": "昨天",
+      "daysAgo": "{{count}}天前",
+      "daysLater": "{{count}}天后",
+      "prevAria": "前一天",
+      "nextAria": "后一天"
     }
   }
 }

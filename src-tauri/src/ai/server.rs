@@ -393,7 +393,7 @@ impl EngineSupervisor {
 
             let bin_path = binary::binary_path()?;
             if !bin_path.exists() {
-                let msg = "AI 引擎 binary 未安装，先去下载".to_string();
+                let msg = "engine.binaryMissing".to_string();
                 inner.state = EngineRuntimeStatus {
                     state: EngineState::Error,
                     port: None,

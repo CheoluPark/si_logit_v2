@@ -68,7 +68,8 @@ function SuperRow_({
   const [pickerOpen, setPickerOpen] = useState(false);
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [editingName, setEditingName] = useState(() => justCreated === true);
-  const [draftName, setDraftName] = useState(sup.name);
+  const displayName = displaySuperCategoryName(sup, t);
+  const [draftName, setDraftName] = useState(displayName);
   const inputRef = useRef<HTMLInputElement>(null);
   // 本地 ref → super card DOM；onMouseDown 时把 rect 给父
   const cardRef = useRef<HTMLDivElement>(null);
@@ -81,20 +82,20 @@ function SuperRow_({
     }
   }, [editingName]);
   useEffect(() => {
-    if (!editingName) setDraftName(sup.name);
-  }, [sup.name, editingName]);
+    if (!editingName) setDraftName(displayName);
+  }, [displayName, editingName]);
 
   const commitName = async () => {
     const trimmed = draftName.trim();
-    if (trimmed && trimmed !== sup.name) {
+    if (trimmed && trimmed !== sup.name && trimmed !== displayName) {
       await update(sup.id, { name: trimmed });
     } else {
-      setDraftName(sup.name);
+      setDraftName(displayName);
     }
     setEditingName(false);
   };
   const cancelName = () => {
-    setDraftName(sup.name);
+    setDraftName(displayName);
     setEditingName(false);
   };
 

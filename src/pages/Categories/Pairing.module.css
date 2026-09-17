@@ -40,7 +40,7 @@
 .row {
   position: relative;
   display: grid;
-  grid-template-columns: var(--device-cols) 80px 160px 28px;
+  grid-template-columns: var(--device-cols) 80px 200px 28px;
   align-items: center;
   gap: 12px;
   padding: 6px 12px;
@@ -58,7 +58,7 @@
    展开宽度与左侧设备列一致（160px）。用 :has() 让任意一行的 nameCol 被 hover 时同步展开整列。*/
 .pairing:has(.nameCol:hover) .row,
 .pairing:has(.nameCol:hover) .devHeader {
-  grid-template-columns: var(--device-cols) 160px 160px 28px;
+  grid-template-columns: var(--device-cols) 160px 200px 28px;
 }
 
 /* zebra：相邻行底色错开一档，分块更清晰。先于 hover / hot 写，
@@ -264,15 +264,15 @@
   align-items: center;
   gap: 4px;
   justify-content: flex-start;
-  /* trigger 整体右移 50px（actionCol 列宽 160 - trigger 宽 ~110 = 50px buffer），
+  /* trigger 整体右移 20px（actionCol 列宽 200px - trigger 宽 ~180px = 20px buffer），
      让 trigger 离左侧 Display name 列文字有充分呼吸空间 */
-  padding-left: 50px;
+  padding-left: 20px;
 }
 
 /* 表头跟 row 用同一套列模板，hover 表格时同步展开统一名列 */
 .devHeader {
   display: grid;
-  grid-template-columns: var(--device-cols) 80px 160px 28px;
+  grid-template-columns: var(--device-cols) 80px 200px 28px;
   transition: grid-template-columns 280ms var(--ease-out);
   gap: 12px;
   padding: 0 12px 8px;

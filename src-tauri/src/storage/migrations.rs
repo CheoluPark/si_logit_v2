@@ -74,7 +74,7 @@ const MIGRATIONS: &[&str] = &[
     UPDATE categories SET icon = 'Code'           WHERE id = 'code';
     UPDATE categories SET icon = 'Globe'          WHERE id = 'browse';
     UPDATE categories SET icon = 'MessageCircle'  WHERE id = 'talk';
-    UPDATE categories SET icon = 'Brush'          WHERE id = 'design';
+    UPDATE categories SET icon = 'Box'            WHERE id = 'design';
     UPDATE categories SET icon = 'Gamepad2'       WHERE id = 'fun';
     UPDATE categories SET icon = 'MoreHorizontal' WHERE id = 'other';
     "#,
@@ -527,10 +527,16 @@ const SCREENSHOT_EMBEDDINGS_SQL: &str = r#"
 /// - 字段存在（v0.6.2-v0.6.5 用户，无论原值 true 还是 false）→ 覆盖为 false
 ///
 /// 用户进入 v0.6.6 后改回 true，下次启动 v23 已 in schema_version 不会再跑。
+///
+/// 注意：**只对已有真实设置的用户生效**（`captureEnabled` 字段存在 = 非全新安装）。
+/// 全新安装的 settings_store 只有 v7 种子 `{}` + v17 补的 privacyUrlKeywords，
+/// 没有 captureEnabled —— 跳过重置，让 `Settings::default()` 的新默认值
+/// （screenshotEnabled: true，폐쇄망 배포 기본값）生效。
 const RESET_SCREENSHOT_ENABLED_TO_FALSE_SQL: &str = r#"
     UPDATE settings_store
     SET data = json_set(data, '$.screenshotEnabled', json('false'))
-    WHERE id = 1;
+    WHERE id = 1
+      AND json_type(data, '$.captureEnabled') IS NOT NULL;
 "#;
 
 /// v24：重置 `drive_files` pull 游标到 epoch，让下次 pull 重新枚举 Drive 上所有文件。
@@ -892,12 +898,44 @@ const DROP_APP_CATEGORIES_SQL: &str = r#"
     DROP TABLE IF EXISTS app_categories;
 "#;
 
+/// v39: 기본 카테고리 재구성 — 사용자 요청 반영.
+/// - design → work (미분류 제거)
+/// - 새 office(사무) 대분류 + office 카테고리 이동
+/// - play(엔터테인먼트) 대분류 + game/video/workchat 삭제 (v31 fun 삭제와 동일 패턴:
+///   app_groups 바인딩 해제 → categories 소프트 삭제 → super 소프트 삭제)
+const RESTRUCTURE_DEFAULT_CATEGORIES_SQL: &str = r#"
+    UPDATE categories SET super_category_id = 'work', updated_at = '1970-01-01T00:00:00Z'
+     WHERE deleted_at IS NULL AND id = 'design';
+
+    INSERT OR IGNORE INTO super_categories(id, name, color, icon, sort_order, updated_at)
+    VALUES ('office', '办公', '#0ea5e9', 'Briefcase', 1, '1970-01-01T00:00:00Z');
+
+    UPDATE categories SET super_category_id = 'office', updated_at = '1970-01-01T00:00:00Z'
+     WHERE deleted_at IS NULL AND id = 'office';
+
+    UPDATE app_groups SET category_id = NULL, updated_at = '1970-01-01T00:00:00Z'
+     WHERE category_id IN ('game', 'video', 'workchat');
+
+    UPDATE categories SET deleted_at = '1970-01-01T00:00:00Z', updated_at = '1970-01-01T00:00:00Z'
+     WHERE deleted_at IS NULL AND id IN ('game', 'video', 'workchat');
+
+    UPDATE super_categories SET deleted_at = '1970-01-01T00:00:00Z', updated_at = '1970-01-01T00:00:00Z'
+     WHERE deleted_at IS NULL AND id = 'play';
+"#;
+
+/// v40: design 카테고리 아이콘 Brush → Box로 변경.
+/// 기존 사용자가 이미 다른 아이콘으로 바꿨으면 덮어쓰지 않도록 id + icon 조건 사용.
+const UPDATE_DESIGN_ICON_TO_BOX_SQL: &str = r#"
+    UPDATE categories SET icon = 'Box', updated_at = '1970-01-01T00:00:00Z'
+     WHERE id = 'design' AND icon = 'Brush';
+"#;
+
 /// 跑全部待应用的 schema 迁移。幂等：已应用的版本号在 `schema_version` 表里查到就跳过。
 /// 启动期失败应中止应用启动（返回 `Err`，bootstrap.rs 用 `expect` 让 panic 立刻可见）。
 pub async fn run(pool: &DbPool) -> Result<()> {
     // v1..v10 是 MIGRATIONS 静态数组，v11+ 平台/运行时拼装放 extras。
     // 顺序就是版本顺序（idx + static_count + 1 = version）。
-    let extras: [&'static str; 28] = [
+    let extras: [&'static str; 30] = [
         CROSS_OS_CLEANUP_SQL,                  // v11
         V12_PLACEHOLDER,                       // v12（occupied，no-op）
         BACKFILL_OUTBOX_SQL,                   // v13
@@ -926,6 +964,8 @@ pub async fn run(pool: &DbPool) -> Result<()> {
         ADD_ACTIVITIES_EXCLUDED_SQL,           // v36
         ADD_ACTIVITIES_URL_HOST_SQL,           // v37
         DROP_APP_CATEGORIES_SQL,               // v38
+        RESTRUCTURE_DEFAULT_CATEGORIES_SQL,    // v39
+        UPDATE_DESIGN_ICON_TO_BOX_SQL,         // v40
     ];
     pool.0
         .call(move |conn| {
@@ -1031,7 +1071,7 @@ mod tests {
 
         assert_eq!(
             count(&pool, "SELECT COUNT(*) FROM schema_version").await,
-            38
+            40
         );
 
         let tables = table_names(&pool).await;
@@ -1100,6 +1140,30 @@ mod tests {
             1
         );
         assert!(count(&pool, "SELECT COUNT(*) FROM super_categories").await >= 4);
+
+        // v39 재구성 검증: design→work, office 대분류 신설, play/workchat/game/video 삭제
+        assert_eq!(
+            count(&pool, "SELECT COUNT(*) FROM categories WHERE id = 'design' AND super_category_id = 'work'").await,
+            1
+        );
+        assert_eq!(
+            count(&pool, "SELECT COUNT(*) FROM super_categories WHERE id = 'office' AND deleted_at IS NULL").await,
+            1
+        );
+        assert_eq!(
+            count(&pool, "SELECT COUNT(*) FROM categories WHERE id IN ('game','video','workchat') AND deleted_at IS NULL").await,
+            0
+        );
+        assert_eq!(
+            count(&pool, "SELECT COUNT(*) FROM super_categories WHERE id = 'play' AND deleted_at IS NULL").await,
+            0
+        );
+
+        // v40: design 아이콘 Brush → Box
+        assert_eq!(
+            count(&pool, "SELECT COUNT(*) FROM categories WHERE id = 'design' AND icon = 'Box'").await,
+            1
+        );
     }
 
     /// 幂等:重复 run 不报错、不重复应用(版本数不变、分类不重复种)。
@@ -1110,7 +1174,7 @@ mod tests {
         run(&pool).await.unwrap();
         assert_eq!(
             count(&pool, "SELECT COUNT(*) FROM schema_version").await,
-            38
+            40
         );
         assert_eq!(
             count(&pool, "SELECT COUNT(*) FROM categories WHERE id = 'code'").await,
@@ -1165,7 +1229,7 @@ mod tests {
 
         assert_eq!(
             count(&pool, "SELECT COUNT(*) FROM schema_version").await,
-            38
+            40
         );
         // 正常数据完好,且被 v26 回填了 remote_id
         assert_eq!(

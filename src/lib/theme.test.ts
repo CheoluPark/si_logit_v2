@@ -24,10 +24,10 @@ describe("theme", () => {
     (document.documentElement.dataset as Record<string, string>).theme = "";
   });
 
-  it("未存 / 非法值回退 minimal", () => {
-    expect(getStoredTheme()).toBe("minimal");
+  it("未存 / 非法值回退 default", () => {
+    expect(getStoredTheme()).toBe("default");
     store.set("hindsight.theme", "neon");
-    expect(getStoredTheme()).toBe("minimal");
+    expect(getStoredTheme()).toBe("default");
   });
   it("setStoredTheme 持久化 + 应用到 dataset + 通知订阅者", () => {
     const seen: string[] = [];
@@ -40,10 +40,10 @@ describe("theme", () => {
     setStoredTheme("default");
     expect(seen).toEqual(["dark"]); // 退订后不再通知
   });
-  it("applyTheme 只改 dataset;getCurrentTheme 对非法值回退 minimal", () => {
-    applyTheme("default");
-    expect(getCurrentTheme()).toBe("default");
-    (document.documentElement.dataset as Record<string, string>).theme = "junk";
+  it("applyTheme 只改 dataset;getCurrentTheme 对非法值回退 default", () => {
+    applyTheme("minimal");
     expect(getCurrentTheme()).toBe("minimal");
+    (document.documentElement.dataset as Record<string, string>).theme = "junk";
+    expect(getCurrentTheme()).toBe("default");
   });
 });

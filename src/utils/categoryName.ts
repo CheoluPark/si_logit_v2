@@ -25,6 +25,7 @@ const DEFAULT_SUPER_CATEGORY_NAMES: Record<string, string> = {
   play: "娱乐",
   social: "社交",
   browse: "浏览",
+  office: "办公",
   off_pc: "PC 외 업무",
 };
 

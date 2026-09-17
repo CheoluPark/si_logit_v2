@@ -8,11 +8,11 @@ export const APP_THEMES: AppTheme[] = ["default", "minimal", "dark"];
 
 const STORAGE_KEY = "hindsight.theme";
 
-/** 读已保存的主题；无 / 非法值回退 minimal（简约为应用默认外观）。 */
+/** 读已保存的主题；无/非法值回退 default。 */
 export function getStoredTheme(): AppTheme {
   const v = localStorage.getItem(STORAGE_KEY);
-  if (v === "default" || v === "dark") return v;
-  return "minimal";
+  if (v === "minimal" || v === "dark") return v;
+  return "default";
 }
 
 /** 把主题写到 <html data-theme>，让 tokens.css 的 [data-theme=...] 覆盖生效。 */
@@ -40,8 +40,8 @@ export function subscribeTheme(cb: () => void): () => void {
   };
 }
 
-/** 读当前生效主题（从 `<html data-theme>`，非法/缺省回退 minimal）。 */
+/** 读当前生效主题（从 `<html data-theme>`，非法/缺省回退 default）。 */
 export function getCurrentTheme(): AppTheme {
   const t = document.documentElement.dataset.theme;
-  return t === "default" || t === "dark" ? t : "minimal";
+  return t === "minimal" || t === "dark" ? t : "default";
 }

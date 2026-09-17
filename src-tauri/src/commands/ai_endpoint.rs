@@ -22,8 +22,10 @@ pub struct TestAiEndpointResp {
     pub ok: bool,
     /// 成功时取响应里的 `data[].id`，最多前 10 个；失败时为空
     pub models: Vec<String>,
-    /// 失败时填给用户看的错误描述；成功时为空
+    /// 失败时填给用户看的错误描述（技术细节，不含用户可见的 headline）；成功时为空
     pub message: String,
+    /// 失败时填 i18n 键码，前端据此查 locale 翻译；成功时为 None
+    pub err_code: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -49,13 +51,13 @@ pub async fn test_ai_endpoint(
 ) -> Result<TestAiEndpointResp, String> {
     let trimmed = endpoint.trim().trim_end_matches('/');
     if trimmed.is_empty() {
-        return Ok(fail("服务地址为空"));
+        return Ok(fail("emptyEndpoint", ""));
     }
     let url = format!("{}/models", trimmed);
 
     let client = match Client::builder().timeout(Duration::from_secs(8)).build() {
         Ok(c) => c,
-        Err(e) => return Ok(fail(&format!("HTTP 客户端构造失败：{e}"))),
+        Err(e) => return Ok(fail("clientBuild", &e.to_string())),
     };
 
     let mut req = client.get(&url);
@@ -65,7 +67,10 @@ pub async fn test_ai_endpoint(
 
     let resp = match req.send().await {
         Ok(r) => r,
-        Err(e) => return Ok(fail(&fmt_send_err(e))),
+        Err(e) => {
+            let (code, detail) = classify_send_err(e);
+            return Ok(fail(code, &detail));
+        }
     };
 
     let status = resp.status();
@@ -73,7 +78,7 @@ pub async fn test_ai_endpoint(
         let body = resp.text().await.unwrap_or_default();
         // 截短服务返回，避免把整个 HTML 错误页粘进 toast
         let preview: String = body.chars().take(120).collect();
-        return Ok(fail(&format!("服务返回 {status}：{preview}")));
+        return Ok(fail("httpStatus", &format!("{status}：{preview}")));
     }
 
     let parsed: ModelsResp = match resp.json().await {
@@ -81,10 +86,7 @@ pub async fn test_ai_endpoint(
         // 带原因链：外层 Display 只说"解码失败"，连接被掐还是 JSON 格式错
         // 全在 source 链里，测试端点正是给用户排障用的
         Err(e) => {
-            return Ok(fail(&format!(
-                "响应体读取/解析失败：{}",
-                crate::ai::llm::error_chain(&e)
-            )))
+            return Ok(fail("parse", &crate::ai::llm::error_chain(&e)))
         }
     };
 
@@ -96,6 +98,7 @@ pub async fn test_ai_endpoint(
         ok: true,
         models,
         message: String::new(),
+        err_code: None,
     })
 }
 
@@ -131,11 +134,27 @@ pub(crate) fn fmt_send_err(e: reqwest::Error) -> String {
     }
 }
 
-fn fail(msg: &str) -> TestAiEndpointResp {
+/// 把 reqwest 发送错误映射为 (err_code, detail) 二元组，
+/// 供 test_ai_endpoint / test_ai_chat 使用。
+fn classify_send_err(e: reqwest::Error) -> (&'static str, String) {
+    let code = if e.is_timeout() {
+        "timeout"
+    } else if e.is_connect() {
+        "connect"
+    } else if e.is_request() {
+        "request"
+    } else {
+        "network"
+    };
+    (code, fmt_send_err(e))
+}
+
+fn fail(code: &str, detail: &str) -> TestAiEndpointResp {
     TestAiEndpointResp {
         ok: false,
         models: Vec::new(),
-        message: msg.to_string(),
+        message: detail.to_string(),
+        err_code: Some(code.to_string()),
     }
 }
 
@@ -156,7 +175,7 @@ pub async fn test_ai_chat(
 ) -> Result<TestAiEndpointResp, String> {
     let trimmed = endpoint.trim().trim_end_matches('/');
     if trimmed.is_empty() || model.trim().is_empty() {
-        return Ok(fail("服务地址或模型 ID 为空"));
+        return Ok(fail("emptyChat", ""));
     }
     let url = format!("{}/chat/completions", trimmed);
 
@@ -177,7 +196,7 @@ pub async fn test_ai_chat(
     // chat 比 /models 慢得多（要真跑一次前向），超时放宽到 30s
     let client = match Client::builder().timeout(Duration::from_secs(30)).build() {
         Ok(c) => c,
-        Err(e) => return Ok(fail(&format!("HTTP 客户端构造失败：{e}"))),
+        Err(e) => return Ok(fail("clientBuild", &e.to_string())),
     };
     let mut req = client.post(&url).json(&body);
     if let Some(k) = api_key.as_ref().map(|s| s.trim()).filter(|s| !s.is_empty()) {
@@ -185,17 +204,21 @@ pub async fn test_ai_chat(
     }
     let resp = match req.send().await {
         Ok(r) => r,
-        Err(e) => return Ok(fail(&fmt_send_err(e))),
+        Err(e) => {
+            let (code, detail) = classify_send_err(e);
+            return Ok(fail(code, &detail));
+        }
     };
     let status = resp.status();
     if !status.is_success() {
         let body = resp.text().await.unwrap_or_default();
         let preview: String = body.chars().take(200).collect();
-        return Ok(fail(&format!("服务返回 {status}：{preview}")));
+        return Ok(fail("httpStatus", &format!("{status}：{preview}")));
     }
     Ok(TestAiEndpointResp {
         ok: true,
         models: Vec::new(),
         message: String::new(),
+        err_code: None,
     })
 }

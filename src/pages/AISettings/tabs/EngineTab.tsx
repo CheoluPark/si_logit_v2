@@ -52,7 +52,7 @@ type TestResult =
   | { kind: "idle" }
   | { kind: "running" }
   | { kind: "ok"; models: string[] }
-  | { kind: "fail"; message: string };
+  | { kind: "fail"; message: string; errCode?: string };
 
 export default function EngineTab() {
   const { t } = useTranslation();
@@ -285,12 +285,27 @@ function EngineSection() {
       await refresh();
       const r = await api.testAiEndpoint(`http://127.0.0.1:${port}/v1`);
       if (r.ok) setTestResult({ kind: "ok", models: r.models });
-      else setTestResult({ kind: "fail", message: r.message });
+      else
+        setTestResult({
+          kind: "fail",
+          message: r.message,
+          errCode: r.errCode ?? undefined,
+        });
     } catch (e) {
-      setTestResult({
-        kind: "fail",
-        message: e instanceof Error ? e.message : String(e),
-      });
+      // start_engine returns Err("engine.xxx") strings; classify as errCode
+      const msg = e instanceof Error ? e.message : String(e);
+      const engineCodeMatch = msg.match(
+        /^(engine\.\w+)(?::(.*))?$/,
+      );
+      if (engineCodeMatch) {
+        setTestResult({
+          kind: "fail",
+          message: engineCodeMatch[2] ?? "",
+          errCode: engineCodeMatch[1],
+        });
+      } else {
+        setTestResult({ kind: "fail", message: msg });
+      }
     } finally {
       // 测完无脑 stop，释放 VRAM；stop 失败仅 log 不影响 testResult
       try {
@@ -805,7 +820,9 @@ function EngineRuntimeRow({
             className={`${styles.engineRuntimeStatus} ${styles.engineRuntimeStatusFail}`}
           >
             <XCircle size={14} strokeWidth={2.2} />
-            {testResult.message}
+            {testResult.errCode
+              ? t(`aiSettings.engine.testErrors.${testResult.errCode}`)
+              : testResult.message}
           </span>
         ) : null}
 
@@ -823,7 +840,11 @@ function EngineRuntimeRow({
       </div>
 
       {isError && rt.error ? (
-        <div className={styles.engineRuntimeError}>{rt.error}</div>
+        <div className={styles.engineRuntimeError}>
+          {rt.error.startsWith("engine.")
+            ? t(`aiSettings.engine.testErrors.${rt.error}`)
+            : rt.error}
+        </div>
       ) : null}
     </div>
   );

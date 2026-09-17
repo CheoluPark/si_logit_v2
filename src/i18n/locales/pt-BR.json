@@ -696,8 +696,9 @@
       "defaults": {
         "work": "Trabalho",
         "play": "Entretenimento",
-        "social": "Social",
-        "browse": "Navegação"
+        "social": "Chat",
+        "browse": "Navegação",
+        "office": "Escritório"
       },
       "orphanLabel": "Sem grupo",
       "catCount": "{{count}} categorias",
@@ -712,7 +713,7 @@
     "defaults": {
       "code": "Programação",
       "browse": "Navegação",
-      "talk": "Social",
+      "talk": "Chat",
       "design": "Design",
       "fun": "Entretenimento",
       "other": "Outros",
@@ -855,13 +856,28 @@
       },
       "ocr": {
         "name": "Componente de reconhecimento de texto (OCR)",
-        "desc": "Usado pela memória de tela para reconhecimento de texto; roda na GPU (DirectML, qualquer placa incluindo integrada).",
+        "desc": "Usado pela memória de tela para reconhecimento de texto; roda na GPU (DirectML, qualquer placa de vídeo incluindo integrada).",
         "macNativeBadge": "Nativo do sistema",
-        "macNativeDesc": "O macOS usa o reconhecimento nativo do sistema (Vision) — nada para baixar.",
-        "upgradeHint": "Uma versão antiga do componente foi detectada; baixe novamente para atualizar para aceleração por GPU.",
+        "macNativeDesc": "macOS usa o reconhecimento embutido do sistema (Vision) — nada para baixar.",
+        "upgradeHint": "Uma versão mais antiga do componente foi detectada; baixe novamente para obter aceleração GPU.",
         "download": "Baixar componente",
         "uninstallConfirmTitle": "Desinstalar o componente de reconhecimento de texto (OCR)?",
-        "uninstallConfirmMessage": "A indexação de texto da tela ficará indisponível até você baixá-lo novamente. Os índices existentes não são afetados."
+        "uninstallConfirmMessage": "A indexação de texto das capturas de tela ficará indisponível até que você baixe novamente. Os índices existentes não são afetados."
+      },
+      "testErrors": {
+        "emptyEndpoint": "O endereço do serviço está vazio",
+        "clientBuild": "Falha ao criar o cliente HTTP",
+        "timeout": "A solicitação expirou",
+        "connect": "Falha na conexão — verifique se o serviço está em execução e se a porta está correta",
+        "request": "Falha ao construir a solicitação",
+        "network": "Erro de rede",
+        "httpStatus": "O serviço retornou um erro",
+        "parse": "Falha ao ler ou analisar a resposta",
+        "emptyChat": "O endereço do serviço ou o ID do modelo estão vazios",
+        "noModelSelected": "Selecione um modelo na aba Modelos antes de iniciar o mecanismo",
+        "mainMissing": "O arquivo do modelo principal selecionado não foi encontrado",
+        "mmprojMissing": "O arquivo do projetor de visão selecionado não foi encontrado",
+        "binaryMissing": "O mecanismo de IA não está instalado — baixe-o primeiro"
       }
     },
     "summaryParams": {
@@ -1605,6 +1621,22 @@
     "scheduledOcr": {
       "title": "Hindsight",
       "body": "OCR agendado iniciado: {{count}} capturas a processar"
+    }
+  },
+  "workLog": {
+    "showMore": "Ver mais",
+    "showLess": "Ver menos",
+    "analyze": "Analisar com IA",
+    "analyzing": "Analisando...",
+    "viewActivities": "Ver Atividades Correspondentes",
+    "totalTime": "Tempo Total",
+    "dateNav": {
+      "today": "Hoje",
+      "yesterday": "Ontem",
+      "daysAgo": "Há {{count}} dias",
+      "daysLater": "Em {{count}} dias",
+      "prevAria": "Dia anterior",
+      "nextAria": "Próximo dia"
     }
   }
 }

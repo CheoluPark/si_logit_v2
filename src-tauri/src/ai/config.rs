@@ -53,7 +53,7 @@ pub struct ExternalProfile {
 
 /// Jira MCP 서버 연결 설정 (Work Log 페이지에서 Work Item 조회용).
 /// transport는 현재 "remote"(MCP over HTTP)만 지원.
-#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase", default)]
 pub struct JiraMcpConfig {
     /// Jira 서버 base URL (예: https://jira.company.com)
@@ -63,6 +63,16 @@ pub struct JiraMcpConfig {
     /// 연결 방식: "remote" (현재 유일)
     #[serde(default = "default_jira_transport")]
     pub transport: String,
+}
+
+impl Default for JiraMcpConfig {
+    fn default() -> Self {
+        Self {
+            url: "http://dxdev.satreci.com/mcpwork/mcp".to_string(),
+            pat: String::new(),
+            transport: default_jira_transport(),
+        }
+    }
 }
 
 fn default_jira_transport() -> String {
@@ -319,19 +329,19 @@ impl Default for AiConfig {
             external_enabled: false,
             external_provider: "openai".to_string(),
             external_profiles: Vec::new(),
-            user_brief: String::new(),
+            user_brief: "위성체의 디지털 로직 설계와 회로 설계 담당하는 엔지니어입니다. 주로 Vivado와 OrCaD를 사용합니다.".to_string(),
             segments: default_segments_for(lang),
             excluded_categories: vec!["other".to_string()],
             models_path: String::new(),
-            active_main: String::new(),
-            active_mmproj: String::new(),
-            summary_main: String::new(),
-            summary_mmproj: String::new(),
-            chat_main: String::new(),
+            active_main: "Qwen3.5-4B-Q4_K_M.gguf".to_string(),
+            active_mmproj: "Qwen3.5-4B-Q4_K_M__mmproj-F16.gguf".to_string(),
+            summary_main: "Qwen3.5-4B-Q4_K_M.gguf".to_string(),
+            summary_mmproj: "Qwen3.5-4B-Q4_K_M__mmproj-F16.gguf".to_string(),
+            chat_main: "Qwen3.5-4B-Q4_K_M.gguf".to_string(),
             chat_thinking: default_chat_thinking(),
-            auto_summary: false,
+            auto_summary: true,
             auto_summary_at: None,
-            auto_summary_times: Vec::new(),
+            auto_summary_times: vec!["23:00".to_string()],
             prompt_language: lang.to_string(),
             prompt_overrides: PromptOverrides::default(),
             batch_size: None,

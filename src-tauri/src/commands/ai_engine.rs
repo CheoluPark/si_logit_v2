@@ -80,14 +80,12 @@ pub async fn start_engine(
     let cfg = settings::load(&pool).await.map_err(String::from)?;
     let main_name = cfg.ai.effective_summary_main();
     if main_name.trim().is_empty() {
-        return Err("请先在「模型」里选一个模型，再启动引擎".to_string());
+        return Err("engine.noModelSelected".to_string());
     }
     let models_dir = crate::ai::models::root_dir(&cfg.ai);
     let main_path = models_dir.join(main_name);
     if !main_path.exists() {
-        return Err(format!(
-            "选中的主权重不存在：{main_name}（可能被删除或路径变了）"
-        ));
+        return Err(format!("engine.mainMissing:{main_name}"));
     }
     let mmproj_name = cfg.ai.effective_summary_mmproj();
     let mmproj_path = if mmproj_name.trim().is_empty() {
@@ -95,7 +93,7 @@ pub async fn start_engine(
     } else {
         let p = models_dir.join(mmproj_name);
         if !p.exists() {
-            return Err(format!("选中的 vision 投影文件不存在：{mmproj_name}"));
+            return Err(format!("engine.mmprojMissing:{mmproj_name}"));
         }
         Some(p)
     };

@@ -696,8 +696,9 @@
       "defaults": {
         "work": "Trabajo",
         "play": "Ocio",
-        "social": "Social",
-        "browse": "Navegación"
+        "social": "Chat",
+        "browse": "Navegación",
+        "office": "Oficina"
       },
       "orphanLabel": "Sin grupo",
       "catCount": "{{count}} categorías",
@@ -712,7 +713,7 @@
     "defaults": {
       "code": "Programación",
       "browse": "Navegación",
-      "talk": "Social",
+      "talk": "Chat",
       "design": "Diseño",
       "fun": "Ocio",
       "other": "Otros",
@@ -855,13 +856,28 @@
       },
       "ocr": {
         "name": "Componente de reconocimiento de texto (OCR)",
-        "desc": "Lo usa la memoria de pantalla para reconocer texto; se ejecuta en la GPU (DirectML, cualquier tarjeta, incluidas las integradas).",
+        "desc": "Usado por la memoria de pantalla para reconocimiento de texto; se ejecuta en la GPU (DirectML, cualquier tarjeta gráfica incluida la integrada).",
         "macNativeBadge": "Nativo del sistema",
-        "macNativeDesc": "macOS usa el reconocimiento nativo del sistema (Vision): no hay nada que descargar.",
-        "upgradeHint": "Se detectó una versión antigua del componente; vuelve a descargarlo para actualizar a la aceleración por GPU.",
-        "download": "Descargar el componente",
+        "macNativeDesc": "macOS usa el reconocimiento del sistema integrado (Vision): no hay nada que descargar.",
+        "upgradeHint": "Se detectó una versión anterior del componente; descárgalo de nuevo para obtener aceleración GPU.",
+        "download": "Descargar componente",
         "uninstallConfirmTitle": "¿Desinstalar el componente de reconocimiento de texto (OCR)?",
-        "uninstallConfirmMessage": "La indexación del texto de pantalla no estará disponible hasta que vuelvas a descargarlo. Los índices existentes no se ven afectados."
+        "uninstallConfirmMessage": "El indexado de texto de capturas de pantalla no estará disponible hasta que lo descargues de nuevo. Los índices existentes no se ven afectados."
+      },
+      "testErrors": {
+        "emptyEndpoint": "La dirección del servicio está vacía",
+        "clientBuild": "Error al crear el cliente HTTP",
+        "timeout": "La solicitud ha expirado",
+        "connect": "Error de conexión: asegúrate de que el servicio esté en ejecución y el puerto sea correcto",
+        "request": "Error al construir la solicitud",
+        "network": "Error de red",
+        "httpStatus": "El servicio devolvió un error",
+        "parse": "Error al leer o analizar la respuesta",
+        "emptyChat": "La dirección del servicio o el ID del modelo están vacíos",
+        "noModelSelected": "Selecciona un modelo en la pestaña Modelos antes de iniciar el motor",
+        "mainMissing": "El archivo del modelo principal seleccionado no se encuentra",
+        "mmprojMissing": "El archivo del proyector de visión seleccionado no se encuentra",
+        "binaryMissing": "El motor de IA no está instalado: descárgalo primero"
       }
     },
     "summaryParams": {
@@ -1605,6 +1621,22 @@
     "scheduledOcr": {
       "title": "Hindsight",
       "body": "OCR programado iniciado: {{count}} capturas por procesar"
+    }
+  },
+  "workLog": {
+    "showMore": "Ver más",
+    "showLess": "Ver menos",
+    "analyze": "Analizar con IA",
+    "analyzing": "Analizando...",
+    "viewActivities": "Ver Actividades Coincidentes",
+    "totalTime": "Tiempo Total",
+    "dateNav": {
+      "today": "Hoy",
+      "yesterday": "Ayer",
+      "daysAgo": "Hace {{count}} días",
+      "daysLater": "En {{count}} días",
+      "prevAria": "Día anterior",
+      "nextAria": "Día siguiente"
     }
   }
 }

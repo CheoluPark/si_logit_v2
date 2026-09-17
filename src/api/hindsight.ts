@@ -187,6 +187,8 @@ export interface TestAiEndpointResp {
   ok: boolean;
   models: string[];
   message: string;
+  /** 失败时 i18n 键码；成功时为 null/undefined */
+  errCode?: string | null;
 }
 
 /** 本地 llama-server binary 的安装状态。 */
@@ -1200,4 +1202,17 @@ export const api = {
   /** Register a work log entry for a Jira issue (placeholder). */
   registerWorkLog: (draft: WorkLogDraft) =>
     invoke<WorkLogResult>("register_work_log", { draft }),
+  /** AI로 스크린샷 기반 작업 묘사를 생성한다. */
+  generateWorkDescription: (
+    date: string,
+    startMs: number,
+    endMs: number,
+    summary: string,
+  ) =>
+    invoke<string>("generate_work_description", {
+      date,
+      startMs,
+      endMs,
+      summary,
+    }),
 };

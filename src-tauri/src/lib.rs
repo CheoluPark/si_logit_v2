@@ -354,6 +354,8 @@ pub fn run() {
             // --- worklog: Work Log MCP placeholder ---
             commands::worklog::fetch_work_items,
             commands::worklog::register_work_log,
+            // --- worklog: 스크린샷 기반 작업 묘사 생성 ---
+            commands::worklog::generate_work_description,
         ])
         .build(tauri::generate_context!())
         // 启动期失败需快速失败：generate_context! / build() 失败 = Tauri runtime

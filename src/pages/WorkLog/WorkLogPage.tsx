@@ -1,6 +1,14 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { ClipboardList, RefreshCw, Copy, Check } from "lucide-react";
+import {
+  ClipboardList,
+  RefreshCw,
+  Copy,
+  Check,
+  ChevronLeft,
+  ChevronRight,
+  X,
+} from "lucide-react";
 import {
   api,
   type WorkItem,
@@ -10,6 +18,7 @@ import { useCategories } from "../../state/categories";
 import {
   type DayActivity,
   formatTime,
+  formatDuration,
   keywordMatch,
   generateWorkLog,
 } from "../../lib/workLogMatch";
@@ -21,21 +30,20 @@ import styles from "./WorkLogPage.module.css";
 
 interface MappingState {
   workLogText: string;
-  startedAt: string; // local datetime-local value: "YYYY-MM-DDTHH:MM"
-  endedAt: string;
 }
 
 /* ------------------------------------------------------------------ */
 /*  Helpers                                                            */
 /* ------------------------------------------------------------------ */
 
-function toLocalDatetime(d: Date): string {
+/** dayOffset (0=today, -1=yesterday) → local "YYYY-MM-DD" */
+function offsetToDateStr(dayOffset: number): string {
+  const d = new Date();
+  d.setDate(d.getDate() + dayOffset);
   const y = d.getFullYear();
   const m = String(d.getMonth() + 1).padStart(2, "0");
   const day = String(d.getDate()).padStart(2, "0");
-  const h = String(d.getHours()).padStart(2, "0");
-  const min = String(d.getMinutes()).padStart(2, "0");
-  return `${y}-${m}-${day}T${h}:${min}`;
+  return `${y}-${m}-${day}`;
 }
 
 /* ------------------------------------------------------------------ */
@@ -48,9 +56,15 @@ export default function WorkLogPage() {
 
   const [workItems, setWorkItems] = useState<WorkItem[]>([]);
   const [fetching, setFetching] = useState(false);
+  const [error, setError] = useState<string | null>(null);
   const [sessions, setSessions] = useState<TimelineSession[]>([]);
   const [mappings, setMappings] = useState<Record<string, MappingState>>({});
   const [copiedKey, setCopiedKey] = useState<string | null>(null);
+  const [dayOffset, setDayOffset] = useState(0);
+  const [analyzingKey, setAnalyzingKey] = useState<string | null>(null);
+  const [activitiesModalKey, setActivitiesModalKey] = useState<string | null>(null);
+
+  const date = useMemo(() => offsetToDateStr(dayOffset), [dayOffset]);
 
   /* ---- Derive DayActivity[] from sessions + category names ---- */
   const dayActivities = useMemo<DayActivity[]>(() => {
@@ -76,14 +90,50 @@ export default function WorkLogPage() {
     return map;
   }, [workItems, dayActivities]);
 
-  /* ---- Fetch today's sessions on mount ---- */
+  /* ---- Total duration per work item ---- */
+  const totalDurationByItem = useMemo(() => {
+    const map = new Map<string, number>();
+    for (const item of workItems) {
+      const matched = matchedByItem.get(item.key) ?? [];
+      if (matched.length === 0) {
+        map.set(item.key, 0);
+        continue;
+      }
+      const startMs = Math.min(...matched.map((a) => a.startMs));
+      const endMs = Math.max(...matched.map((a) => a.endMs));
+      map.set(item.key, endMs - startMs);
+    }
+    return map;
+  }, [workItems, matchedByItem]);
+
+  /* ---- Fetch sessions for current date ---- */
   useEffect(() => {
-    const dateStr = new Date().toISOString().split("T")[0];
     api
-      .getTimelineSessions(dateStr)
+      .getTimelineSessions(date)
       .then(setSessions)
       .catch(console.error);
-  }, []);
+  }, [date]);
+
+  /* ---- Build mappings from items + activities ---- */
+  const buildMappings = useCallback(
+    (items: WorkItem[], acts: DayActivity[]) => {
+      const next: Record<string, MappingState> = {};
+      for (const item of items) {
+        const matched = keywordMatch(item.summary, acts);
+        next[item.key] = {
+          workLogText: generateWorkLog(item, matched),
+        };
+      }
+      return next;
+    },
+    [],
+  );
+
+  /* ---- Rebuild mappings when sessions change (date navigation) ---- */
+  useEffect(() => {
+    if (workItems.length === 0) return;
+    setMappings(buildMappings(workItems, dayActivities));
+  }, [dayActivities]);
 
   /* ---- Fetch work items ---- */
   const handleFetch = useCallback(async () => {
@@ -91,32 +141,15 @@ export default function WorkLogPage() {
     try {
       const items = await api.fetchWorkItems();
       setWorkItems(items);
-
-      // Initialize mapping state for each item
-      const next: Record<string, MappingState> = {};
-      for (const item of items) {
-        const matched = keywordMatch(item.summary, dayActivities);
-        const startMs =
-          matched.length > 0
-            ? Math.min(...matched.map((a) => a.startMs))
-            : Date.now();
-        const endMs =
-          matched.length > 0
-            ? Math.max(...matched.map((a) => a.endMs))
-            : Date.now();
-        next[item.key] = {
-          workLogText: generateWorkLog(item, matched),
-          startedAt: toLocalDatetime(new Date(startMs)),
-          endedAt: toLocalDatetime(new Date(endMs)),
-        };
-      }
-      setMappings(next);
+      setMappings(buildMappings(items, dayActivities));
+      setError(null);
     } catch (err) {
       console.error("Failed to fetch work items", err);
+      setError(typeof err === "string" ? err : String(err));
     } finally {
       setFetching(false);
     }
-  }, [dayActivities]);
+  }, [dayActivities, buildMappings]);
 
   /* ---- Update a mapping field ---- */
   const updateMapping = useCallback(
@@ -129,6 +162,47 @@ export default function WorkLogPage() {
     [],
   );
 
+  /* ---- AI work description analysis ---- */
+  const handleAnalyze = useCallback(
+    async (item: WorkItem) => {
+      const matched = matchedByItem.get(item.key) ?? [];
+      if (matched.length === 0) return;
+      const startMs = Math.min(...matched.map((a) => a.startMs));
+      const endMs = Math.max(...matched.map((a) => a.endMs));
+      setAnalyzingKey(item.key);
+      try {
+        const text = await api.generateWorkDescription(
+          date,
+          startMs,
+          endMs,
+          item.summary,
+        );
+        updateMapping(item.key, { workLogText: text });
+      } catch (err) {
+        console.error("AI analysis failed", err);
+      } finally {
+        setAnalyzingKey(null);
+      }
+    },
+    [date, matchedByItem, updateMapping],
+  );
+
+  /* ---- Date label ---- */
+  const offsetLabel = (off: number): string => {
+    if (off === 0) return t("workLog.dateNav.today");
+    if (off === -1) return t("workLog.dateNav.yesterday");
+    if (off < -1) return t("workLog.dateNav.daysAgo", { count: -off });
+    return t("workLog.dateNav.daysLater", { count: off });
+  };
+
+  /* ---- Modal activities data ---- */
+  const modalActivities = activitiesModalKey
+    ? matchedByItem.get(activitiesModalKey) ?? []
+    : [];
+  const modalItem = activitiesModalKey
+    ? workItems.find((it) => it.key === activitiesModalKey) ?? null
+    : null;
+
   /* ---- Render ---- */
   return (
     <div className={styles.page}>
@@ -138,6 +212,34 @@ export default function WorkLogPage() {
       </header>
 
       <p className={styles.description}>{t("workLog.description")}</p>
+
+      <div className={styles.dateNav}>
+        <button
+          type="button"
+          className={styles.navBtn}
+          onClick={() => setDayOffset((v) => v - 1)}
+          aria-label={t("workLog.dateNav.prevAria")}
+        >
+          <ChevronLeft size={14} strokeWidth={1.75} />
+        </button>
+        <button
+          type="button"
+          className={`${styles.dayPill} ${dayOffset !== 0 ? styles.dayPillClickable : ""}`}
+          onClick={() => setDayOffset(0)}
+          disabled={dayOffset === 0}
+        >
+          {offsetLabel(dayOffset)}
+        </button>
+        <button
+          type="button"
+          className={styles.navBtn}
+          onClick={() => setDayOffset((v) => v + 1)}
+          disabled={dayOffset >= 0}
+          aria-label={t("workLog.dateNav.nextAria")}
+        >
+          <ChevronRight size={14} strokeWidth={1.75} />
+        </button>
+      </div>
 
       <button
         className={styles.fetchButton}
@@ -157,8 +259,15 @@ export default function WorkLogPage() {
         )}
       </button>
 
+      {/* Error state */}
+      {error && (
+        <div className={styles.errorState} role="alert">
+          {error}
+        </div>
+      )}
+
       {/* Empty state */}
-      {workItems.length === 0 && !fetching && (
+      {workItems.length === 0 && !fetching && !error && (
         <div className={styles.emptyState}>{t("workLog.noItems")}</div>
       )}
 
@@ -166,6 +275,7 @@ export default function WorkLogPage() {
       {workItems.map((item) => {
         const mapping = mappings[item.key];
         const matched = matchedByItem.get(item.key) ?? [];
+        const totalMs = totalDurationByItem.get(item.key) ?? 0;
 
         return (
           <div key={item.key} className={styles.itemCard}>
@@ -215,29 +325,20 @@ export default function WorkLogPage() {
               </div>
             )}
 
-            {/* Matched activities */}
-            <div>
-              <div className={styles.sectionLabel}>
-                {t("workLog.matchedActivities")} ({matched.length})
-              </div>
-              {matched.length > 0 ? (
-                <div className={styles.activityList}>
-                  {matched.map((act) => (
-                    <div key={act.id} className={styles.activityItem}>
-                      <span className={styles.activityTime}>
-                        {formatTime(act.startMs)} ~ {formatTime(act.endMs)}
-                      </span>
-                      <span className={styles.activityName}>{act.appName}</span>
-                      {act.title && (
-                        <span className={styles.activityTitle}>{act.title}</span>
-                      )}
-                    </div>
-                  ))}
-                </div>
-              ) : (
-                <div className={styles.noActivities}>
-                  {t("workLog.noActivities")}
-                </div>
+            {/* Matched activities button */}
+            <div className={styles.activityRow}>
+              <button
+                type="button"
+                className={styles.viewActivitiesButton}
+                onClick={() => setActivitiesModalKey(item.key)}
+                disabled={matched.length === 0}
+              >
+                {t("workLog.viewActivities")} ({matched.length})
+              </button>
+              {totalMs > 0 && (
+                <span className={styles.totalTime}>
+                  {t("workLog.totalTime")}: {formatDuration(totalMs)}
+                </span>
               )}
             </div>
 
@@ -246,6 +347,21 @@ export default function WorkLogPage() {
               <div className={styles.sectionLabel}>
                 {t("workLog.workLogText")}
               </div>
+              <button
+                type="button"
+                className={styles.analyzeButton}
+                disabled={matched.length === 0 || analyzingKey === item.key}
+                onClick={() => handleAnalyze(item)}
+              >
+                {analyzingKey === item.key ? (
+                  <>
+                    <RefreshCw size={14} className={styles.spinner} />
+                    {t("workLog.analyzing")}
+                  </>
+                ) : (
+                  t("workLog.analyze")
+                )}
+              </button>
               <textarea
                 className={styles.textarea}
                 value={mapping?.workLogText ?? ""}
@@ -257,42 +373,13 @@ export default function WorkLogPage() {
               />
             </div>
 
-            {/* Time range */}
-            <div className={styles.timeRange}>
-              <div className={styles.timeInput}>
-                <label className={styles.timeInputLabel}>
-                  {t("workLog.startDate")}
-                </label>
-                <input
-                  type="datetime-local"
-                  value={mapping?.startedAt ?? ""}
-                  onChange={(e) =>
-                    updateMapping(item.key, { startedAt: e.target.value })
-                  }
-                />
-              </div>
-              <span className={styles.timeSeparator}>~</span>
-              <div className={styles.timeInput}>
-                <label className={styles.timeInputLabel}>
-                  {t("workLog.endDate")}
-                </label>
-                <input
-                  type="datetime-local"
-                  value={mapping?.endedAt ?? ""}
-                  onChange={(e) =>
-                    updateMapping(item.key, { endedAt: e.target.value })
-                  }
-                />
-              </div>
-            </div>
-
             {/* Copy button */}
             <button
               className={styles.copyButton}
               onClick={() => {
                 const text = mapping?.workLogText ?? "";
                 if (text) {
-                  navigator.clipboard.writeText(text);
+                  void navigator.clipboard.writeText(text);
                   setCopiedKey(item.key);
                   setTimeout(() => setCopiedKey(null), 2000);
                 }
@@ -300,12 +387,12 @@ export default function WorkLogPage() {
             >
               {copiedKey === item.key ? (
                 <>
-                  <Check size={14} />
+                  <Check size={12} />
                   {t("workLog.copied")}
                 </>
               ) : (
                 <>
-                  <Copy size={14} />
+                  <Copy size={12} />
                   {t("workLog.copy")}
                 </>
               )}
@@ -313,6 +400,57 @@ export default function WorkLogPage() {
           </div>
         );
       })}
+
+      {/* Activities modal */}
+      {activitiesModalKey && (
+        <div
+          className={styles.modalBackdrop}
+          onMouseDown={() => setActivitiesModalKey(null)}
+          role="presentation"
+        >
+          {/* eslint-disable-next-line jsx-a11y/no-noninteractive-element-interactions */}
+          <div
+            className={styles.modalDialog}
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="activities-modal-title"
+            onMouseDown={(e) => e.stopPropagation()}
+          >
+            <h2 id="activities-modal-title" className={styles.modalTitle}>
+              {t("workLog.matchedActivities")} — {modalItem?.key ?? ""}
+            </h2>
+            <div className={styles.modalContent}>
+              {modalActivities.length === 0 ? (
+                <div className={styles.noActivities}>{t("workLog.noActivities")}</div>
+              ) : (
+                <div className={styles.activityList}>
+                  {modalActivities.map((act) => (
+                    <div key={act.id} className={styles.activityItem}>
+                      <span className={styles.activityTime}>
+                        {formatTime(act.startMs)} ~ {formatTime(act.endMs)}
+                      </span>
+                      <span className={styles.activityName}>{act.appName}</span>
+                      {act.title && (
+                        <span className={styles.activityTitle}>{act.title}</span>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+            <div className={styles.modalActions}>
+              <button
+                type="button"
+                className={styles.modalCloseBtn}
+                onClick={() => setActivitiesModalKey(null)}
+              >
+                <X size={14} />
+                {t("common.close")}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

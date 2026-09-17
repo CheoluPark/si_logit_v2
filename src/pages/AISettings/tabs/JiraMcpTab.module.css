@@ -39,19 +39,3 @@
   color: var(--text-strong);
   background: var(--surface-2);
 }
-
-/* Read-only transport badge */
-.transportBadge {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  height: 32px;
-  padding: 0 12px;
-  background: var(--surface-2);
-  border: 1px solid var(--border-default);
-  border-radius: var(--radius-sm);
-  font-size: 13px;
-  font-weight: var(--font-weight-medium);
-  color: var(--text-muted);
-  user-select: none;
-}

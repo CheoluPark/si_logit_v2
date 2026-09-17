@@ -1,5 +1,5 @@
 import { useTranslation } from "react-i18next";
-import { KeyRound, Link, Shield } from "lucide-react";
+import { KeyRound, Link } from "lucide-react";
 import { Section } from "../../../components/FormLayout/Section";
 import { Row } from "../../../components/FormLayout/Row";
 import { useAiSettings } from "../shared/useAiSettings";
@@ -80,16 +80,7 @@ export default function JiraMcpTab() {
           </div>
         </Row>
 
-        {/* Connection Type — read-only */}
-        <Row
-          label={t("aiSettings.jiraMcp.transportLabel")}
-          description={t("aiSettings.jiraMcp.hint")}
-        >
-          <span className={localStyles.transportBadge}>
-            <Shield size={12} strokeWidth={2.2} />
-            {t("aiSettings.jiraMcp.transportRemote")}
-          </span>
-        </Row>
+
       </Section>
     </div>
   );

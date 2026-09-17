@@ -121,15 +121,13 @@ impl Default for Settings {
     fn default() -> Self {
         Self {
             capture_enabled: true,
-            // 默认关：截图涉及隐私 + Apple TCC 弹框 + 多屏多 Space 的边界 case，
-            // 设计上"explicitly opt-in"——用户去 设置 → 通用 → 启用截图 主动开。
-            // v23 migration 同步把存量用户的 screenshotEnabled 也重置成 false。
-            screenshot_enabled: false,
+            // 배포 기본값: 켜짐 (폐쇄망 환경에서 스크린샷 권한 문제 없음)
+            screenshot_enabled: true,
             capture_interval_seconds: 30,
             screenshot_path: String::new(),
             work_hours_enabled: false,
             work_ranges: Vec::new(),
-            auto_start: false,
+            auto_start: true,
             show_window_on_auto_start: false,
             retention_days: 7,
             google_client_id: String::new(),
@@ -138,13 +136,13 @@ impl Default for Settings {
             privacy_app_keywords: Vec::new(),
             record_browser_host: true,
             minimize_to_tray: true,
-            auto_update_enabled: true,
+            auto_update_enabled: false,
             auto_update_interval: "weekly".to_string(),
             last_update_check_at: None,
             idle_threshold_seconds: 180,
-            memory_ocr_resident: false,
+            memory_ocr_resident: true,
             memory_ocr_daily_at: None,
-            memory_ocr_daily_times: Vec::new(),
+            memory_ocr_daily_times: vec!["22:00".to_string()],
             chat_privacy_acknowledged: false,
             sync_ai_summaries: false,
             sync_chat_history: false,

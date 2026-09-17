@@ -61,7 +61,8 @@ export function CategoryRow({
   // 用 useState 的惰性初值而不是 effect —— 新分类是全新 mount（key = 新 id），
   // 初值就够；后续 justCreated 转 false 也不该把用户正在编辑的输入框收掉。
   const [editingName, setEditingName] = useState(() => justCreated === true);
-  const [draftName, setDraftName] = useState(category.name);
+  const displayName = displayCategoryName(category, t);
+  const [draftName, setDraftName] = useState(displayName);
   const [pickerOpen, setPickerOpen] = useState(false);
   const [confirmOpen, setConfirmOpen] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -86,21 +87,21 @@ export function CategoryRow({
   }, [editingName]);
 
   useEffect(() => {
-    if (!editingName) setDraftName(category.name);
-  }, [category.name, editingName]);
+    if (!editingName) setDraftName(displayName);
+  }, [displayName, editingName]);
 
   const commitName = async () => {
     const trimmed = draftName.trim();
-    if (trimmed && trimmed !== category.name) {
+    if (trimmed && trimmed !== category.name && trimmed !== displayName) {
       await update(category.id, { name: trimmed });
     } else {
-      setDraftName(category.name);
+      setDraftName(displayName);
     }
     setEditingName(false);
   };
 
   const cancelName = () => {
-    setDraftName(category.name);
+    setDraftName(displayName);
     setEditingName(false);
   };
 

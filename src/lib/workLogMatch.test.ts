@@ -144,21 +144,35 @@ describe("generateWorkLog", () => {
     const text = generateWorkLog(mockItems[1], matched);
 
     expect(text).toContain(mockItems[1].summary);
-    expect(text).toContain("수행 업무:");
-    expect(text).toContain("README.md");
-    expect(text).toContain("DEVELOPMENT.md");
+    expect(text).toContain("Visual Studio Code");
+    // 10분 단위 시간 표시 (총 수행 시간)
+    expect(text).toMatch(/총 \d+분/);
   });
 
   it("매칭 없으면 빈 문자열", () => {
     expect(generateWorkLog(mockItems[0], [])).toBe("");
   });
 
-  it("시간순 정렬", () => {
+  it("각 도구별 수행 시간 표시", () => {
     const matched = keywordMatch(mockItems[1].summary, todayActivities);
     const text = generateWorkLog(mockItems[1], matched);
-    const readmeIdx = text.indexOf("README.md");
-    const devIdx = text.indexOf("DEVELOPMENT.md");
-    expect(readmeIdx).toBeGreaterThan(-1);
-    expect(devIdx).toBeGreaterThan(readmeIdx);
+
+    expect(text).toContain("Visual Studio Code:");
+    expect(text).toMatch(/- Visual Studio Code: \d+분/);
+  });
+
+  it("총 수행 시간이 도구별 시간 합과 일치", () => {
+    // 현실적인 시간 데이터 (분 단위)로 직접 구성
+    const realistic: DayActivity[] = [
+      { id: "a1", appName: "code", title: "README.md - Hindsight - Visual Studio Code", startMs: T0, endMs: T0 + 25 * 60_000, superCategory: "dev" },
+      { id: "a2", appName: "code", title: "DEVELOPMENT.md - Hindsight - Visual Studio Code", startMs: T0 + 30 * 60_000, endMs: T0 + 55 * 60_000, superCategory: "dev" },
+    ];
+    const text = generateWorkLog(mockItems[1], realistic);
+
+    const totalMatch = text.match(/총 (\d+)분 수행/);
+    expect(totalMatch).not.toBeNull();
+    expect(Number(totalMatch![1])).toBeGreaterThan(0);
+    // 25 + 25 = 50분 → 10분 단위 반올림 시 50분
+    expect(totalMatch![1]).toBe("50");
   });
 });

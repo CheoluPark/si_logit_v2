@@ -33,16 +33,91 @@ export function keywordMatch(
   });
 }
 
+interface MergedRange {
+  startMs: number;
+  endMs: number;
+  title: string;
+}
+
+function mergeRanges(activities: DayActivity[], gapMs: number): MergedRange[] {
+  const sorted = [...activities].sort((a, b) => a.startMs - b.startMs);
+  const ranges: MergedRange[] = [];
+
+  for (const act of sorted) {
+    const last = ranges[ranges.length - 1];
+    // Same title and overlapping/near-consecutive → merge
+    if (last && last.title === act.title && act.startMs - last.endMs <= gapMs) {
+      last.endMs = Math.max(last.endMs, act.endMs);
+    } else {
+      ranges.push({ startMs: act.startMs, endMs: act.endMs, title: act.title });
+    }
+  }
+  return ranges;
+}
+
+/** 밀리초를 10분 단위로 반올림하여 한국어 시간 문자열로 변환 (예: "10분", "30분", "1시간", "1시간 30분") */
+export function formatDuration(totalMs: number): string {
+  const TEN_MIN = 10 * 60 * 1000;
+  const roundedMin = Math.round(totalMs / TEN_MIN) * 10;
+  const hours = Math.floor(roundedMin / 60);
+  const minutes = roundedMin % 60;
+  if (hours === 0) return `${minutes}분`;
+  if (minutes === 0) return `${hours}시간`;
+  return `${hours}시간 ${minutes}분`;
+}
+
 export function generateWorkLog(
   item: WorkItem,
   matched: DayActivity[],
 ): string {
   if (matched.length === 0) return "";
+
   const sorted = [...matched].sort((a, b) => a.startMs - b.startMs);
-  const lines = sorted.map((act) => {
-    const start = formatTime(act.startMs);
-    const end = formatTime(act.endMs);
-    return `  - ${act.appName}: ${act.title || "(no title)"} (${start}~${end})`;
+  const gapMs = 2 * 60 * 1000; // 2 minutes
+
+  // Group by appName
+  const byApp = new Map<string, DayActivity[]>();
+  for (const act of sorted) {
+    const key = act.appName;
+    const list = byApp.get(key) || [];
+    list.push(act);
+    byApp.set(key, list);
+  }
+
+  // For each app group, merge consecutive/same-title ranges and sum duration
+  const groups: { app: string; totalMs: number }[] = [];
+  for (const [app, acts] of byApp) {
+    const ranges = mergeRanges(acts, gapMs);
+    const totalMs = ranges.reduce((sum, r) => sum + (r.endMs - r.startMs), 0);
+    groups.push({ app, totalMs });
+  }
+
+  // Sort groups by total duration descending (가장 많이 작업한 도구 우선)
+  groups.sort((a, b) => b.totalMs - a.totalMs);
+
+  // 총 수행 시간 계산
+  const grandTotal = groups.reduce((s, g) => s + g.totalMs, 0);
+
+  // Bullet lines: 각 도구별 수행 시간
+  const lines = groups.map(({ app, totalMs }) => {
+    const appLabel = appNameLabel(app);
+    return `- ${appLabel}: ${formatDuration(totalMs)}`;
   });
-  return `${item.summary}\n\n수행 업무:\n${lines.join("\n")}`;
+
+  return `${item.summary}\n\n총 ${formatDuration(grandTotal)} 수행\n\n${lines.join("\n")}`;
+}
+
+function appNameLabel(app: string): string {
+  switch (app) {
+    case "opencode":
+      return "OpenCode";
+    case "code":
+      return "Visual Studio Code";
+    case "brave":
+      return "Brave 브라우저";
+    case "Everything":
+      return "Everything";
+    default:
+      return app;
+  }
 }

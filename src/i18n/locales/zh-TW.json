@@ -696,8 +696,9 @@
       "defaults": {
         "work": "工作",
         "play": "娛樂",
-        "social": "社交",
-        "browse": "瀏覽"
+        "social": "聊天",
+        "browse": "瀏覽",
+        "office": "辦公"
       },
       "orphanLabel": "未歸入大類",
       "catCount": "{{count}} 個分類",
@@ -712,7 +713,7 @@
     "defaults": {
       "code": "程式設計",
       "browse": "瀏覽",
-      "talk": "社交",
+      "talk": "聊天",
       "design": "設計",
       "fun": "娛樂",
       "other": "其他",
@@ -855,13 +856,28 @@
       },
       "ocr": {
         "name": "文字辨識（OCR）元件",
-        "desc": "螢幕記憶的文字辨識使用；辨識在 GPU 上執行（DirectML，任意顯卡含內顯）。",
+        "desc": "螢幕記憶文字辨識用，運行在 GPU 上（DirectML，任何顯示卡包括內顯）。",
         "macNativeBadge": "系統原生",
-        "macNativeDesc": "macOS 使用系統原生辨識（Vision），無需下載任何元件。",
-        "upgradeHint": "偵測到舊版本元件，重新下載即可升級到 GPU 加速。",
+        "macNativeDesc": "macOS 使用內建系統辨識（Vision）——無需下載。",
+        "upgradeHint": "偵測到舊版元件，重新下載可升級到 GPU 加速。",
         "download": "下載元件",
         "uninstallConfirmTitle": "解除安裝文字辨識（OCR）元件？",
-        "uninstallConfirmMessage": "解除安裝後螢幕文字索引功能不可用，重新下載即可恢復。已建立的索引不受影響。"
+        "uninstallConfirmMessage": "解除安裝後螢幕文字索引將無法使用，需重新下載。已有索引不受影響。"
+      },
+      "testErrors": {
+        "emptyEndpoint": "服務地址為空",
+        "clientBuild": "HTTP 用戶端建構失敗",
+        "timeout": "請求逾時",
+        "connect": "連線失敗（請確認服務是否啟動、連接埠是否正確）",
+        "request": "請求建構失敗",
+        "network": "網路錯誤",
+        "httpStatus": "服務回傳錯誤",
+        "parse": "回應體讀取/解析失敗",
+        "emptyChat": "服務地址或模型 ID 為空",
+        "noModelSelected": "請先在「模型」裡選一個模型，再啟動引擎",
+        "mainMissing": "選取的主權重不存在",
+        "mmprojMissing": "選取的 vision 投影檔案不存在",
+        "binaryMissing": "AI 引擎未安裝，請先下載"
       }
     },
     "summaryParams": {
@@ -1605,6 +1621,22 @@
     "scheduledOcr": {
       "title": "Hindsight",
       "body": "定時補辨識開始:{{count}} 張截圖待處理"
+    }
+  },
+  "workLog": {
+    "showMore": "展開",
+    "showLess": "收起",
+    "analyze": "AI 分析",
+    "analyzing": "分析中...",
+    "viewActivities": "查看匹配的活動",
+    "totalTime": "總時間",
+    "dateNav": {
+      "today": "今天",
+      "yesterday": "昨天",
+      "daysAgo": "{{count}}天前",
+      "daysLater": "{{count}}天後",
+      "prevAria": "前一天",
+      "nextAria": "後一天"
     }
   }
 }
