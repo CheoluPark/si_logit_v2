@@ -18,7 +18,6 @@ export default tseslint.config(
       "src-tauri/target/**",
       "src-tauri/gen/**",
       ".venv/**",
-      "scripts/**",
       "public/**",
       "*.config.js",
     ],

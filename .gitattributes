@@ -4,7 +4,6 @@
 # src-tauri/src/ 都报 "Incorrect newline style"。所有文本视为 LF，二进制
 # 显式标出来避免误转。
 * text=auto eol=lf
-
 # 二进制资源（git 不应试图猜行尾、不应 diff）
 *.png binary
 *.jpg binary
@@ -12,11 +11,15 @@
 *.gif binary
 *.ico binary
 *.icns binary
-*.onnx binary
+*.onnx filter=lfs diff=lfs merge=lfs -text
 *.dmg binary
-*.zip binary
+*.zip filter=lfs diff=lfs merge=lfs -text
 *.gz binary
 *.woff binary
 *.woff2 binary
 *.ttf binary
 *.otf binary
+*.dll filter=lfs diff=lfs merge=lfs -text
+*.exe filter=lfs diff=lfs merge=lfs -text
+*.mp4 filter=lfs diff=lfs merge=lfs -text
+*.gguf filter=lfs diff=lfs merge=lfs -text

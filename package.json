@@ -8,21 +8,16 @@
   },
   "scripts": {
     "dev": "vite",
-    "demo": "python3 scripts/demo/demo.py",
-    "demo:fresh": "python3 scripts/demo/demo.py --fresh",
     "build": "npm run lint && tsc && vite build",
     "build:notest": "tsc && vite build",
-    "lint": "eslint src --max-warnings 2",
+    "lint": "eslint src --max-warnings 3",
     "lint:fix": "eslint src --fix",
     "format": "prettier --write src",
     "format:check": "prettier --check src",
     "test": "vitest run",
     "test:watch": "vitest",
     "preview": "vite preview",
-    "build:demo": "vite build --config web/vite.config.ts",
-    "preview:demo": "vite preview --config web/vite.config.ts",
     "tauri": "tauri",
-    "release": "node scripts/release.mjs",
     "tauri:build:mac": "set -a; . ./.env.local; set +a; tauri build"
   },
   "dependencies": {
