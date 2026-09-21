@@ -5,7 +5,7 @@
 
 use tauri::State;
 
-use crate::repo::categories::{self, Category, CategoryInput, CategoryPatch, UnclassifiedApp};
+use crate::repo::categories::{self, Category, CategoryInput, CategoryPatch};
 use crate::storage::DbPool;
 
 /// 拉所有分类（包括内置和用户自建），按 sort_order 升序。
@@ -71,19 +71,6 @@ pub async fn assign_app_to_category(
 #[tauri::command]
 pub async fn unassign_app(pool: State<'_, DbPool>, process_name: String) -> Result<(), String> {
     categories::unassign_app(&pool, &process_name)
-        .await
-        .map_err(Into::into)
-}
-
-/// 列最近 N 天里出现过、但还没被分类（或归到 'other'）的应用。
-/// 给「分类」页面的"待归类"卡片用，方便用户批量归类。
-/// `days_back` 默认 7。
-#[tauri::command]
-pub async fn list_unclassified_apps(
-    pool: State<'_, DbPool>,
-    days_back: Option<u32>,
-) -> Result<Vec<UnclassifiedApp>, String> {
-    categories::list_unclassified(&pool, days_back.unwrap_or(7))
         .await
         .map_err(Into::into)
 }

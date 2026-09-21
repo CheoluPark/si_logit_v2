@@ -3,10 +3,7 @@
 //!
 //! 跟 [`categories`](super::categories) 的关键区别：
 //! - 大类**不参与时长统计 JOIN**——统计仍按 categories 聚合，大类只是 UI 容器
-//! - 大类**目前不上 outbox 同步**（v28 schema 留好了 updated_at/deleted_at，sync 接入是 TODO）
 //! - 删大类 = 软删大类自己 + 把子分类的 super_category_id 置 NULL（fall back 到"未归入"）
-//!
-//! 所有写都是单设备本地写。多设备场景下需要等 sync 集成完毕后才能 LWW 收敛。
 
 use serde::{Deserialize, Serialize};
 

@@ -204,7 +204,7 @@ impl OcrEngine {
     fn load_inner(fast: bool) -> Result<Self> {
         #[cfg(target_os = "macos")]
         if Self::use_vision() {
-            log::info!("OCR 引擎:系统 Vision(ANE)");
+            log::info!("OCR engine: system Vision (ANE)");
             return Ok(Self {
                 backend: Backend::Vision(super::ocr_vision::VisionEngine::new()),
             });
@@ -257,7 +257,7 @@ impl PaddleEngine {
         if dict.is_empty() {
             return Err(Error::Ocr("字典为空".into()));
         }
-        log::info!("OCR 引擎加载,intra threads = {threads}");
+        log::info!("OCR engine loaded, intra threads = {threads}");
         let open = |name: &str| -> Result<(Session, bool)> {
             crate::ai::onnx_session_from_file(threads, &dir.join(name))
                 .map_err(|e| Error::Ocr(format!("加载 {name} 失败: {e}")))
@@ -286,7 +286,7 @@ impl PaddleEngine {
             Ok("cpu") => RecTier::Cpu,
             _ => tier,
         };
-        log::info!("rec 执行档位: {tier:?}");
+        log::info!("rec execution tier: {tier:?}");
         let engine = Self {
             det: Mutex::new(det),
             rec: Mutex::new(rec),
@@ -297,9 +297,9 @@ impl PaddleEngine {
         // 首帧不再额外慢几百 ms。失败只 warn(真实推理路径自带错误处理)。
         let t = std::time::Instant::now();
         if let Err(e) = engine.warmup() {
-            log::warn!("OCR 预热失败(不影响使用): {e}");
+            log::warn!("OCR warmup failed (no impact on usage): {e}");
         } else {
-            log::debug!("OCR 预热完成: {}ms", t.elapsed().as_millis());
+            log::debug!("OCR warmup complete: {}ms", t.elapsed().as_millis());
         }
         Ok(engine)
     }
@@ -389,7 +389,7 @@ impl PaddleEngine {
             per_box[u.box_idx].push_str(text);
         }
         log::debug!(
-            "ocr: det {det_ms}ms + rec {}ms [crop {crop_ms} + norm {} + infer {} + ctc {}] ({} 框 {} 单元)",
+            "ocr: det {det_ms}ms + rec {}ms [crop {crop_ms} + norm {} + infer {} + ctc {}] ({} boxes {} units)",
             t_rec.elapsed().as_millis(),
             tm.norm.as_millis(),
             tm.infer.as_millis(),
@@ -477,7 +477,7 @@ impl PaddleEngine {
             )));
         }
         log::debug!(
-            "det 分段: resize {resize_ms}ms + norm {norm_ms}ms + infer {infer_ms}ms + post {}ms",
+            "det segmentation: resize {resize_ms}ms + norm {norm_ms}ms + infer {infer_ms}ms + post {}ms",
             t_post.elapsed().as_millis()
         );
         let (rx, ry) = (ow as f32 / tw as f32, oh as f32 / th as f32);

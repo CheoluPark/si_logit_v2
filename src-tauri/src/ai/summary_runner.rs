@@ -43,7 +43,7 @@ pub trait ProgressSink {
 impl ProgressSink for AppHandle {
     fn emit_progress(&self, payload: SummaryProgress) {
         if let Err(e) = self.emit(SUMMARY_PROGRESS_EVENT, &payload) {
-            log::warn!("emit {SUMMARY_PROGRESS_EVENT} 失败: {e}");
+            log::warn!("emit {SUMMARY_PROGRESS_EVENT} failed: {e}");
         }
     }
 }
@@ -239,9 +239,11 @@ impl<S: ProgressSink> DaySummaryRunner<S> {
         // 整轮跑完(未被取消/未提前返错)才收敛:删除永远发生在新内容落库之后。
         // 失败只告警——清理不掉孤儿段不影响本次生成的结果。
         match ai_summaries::prune_segments_except(&self.pool, source, &date_str, &kept).await {
-            Ok(n) if n > 0 => log::info!("{source} {date_str}: 清理 {n} 条失效段"),
+            Ok(n) if n > 0 => log::info!("{source} {date_str}: pruned {n} stale segments"),
             Ok(_) => {}
-            Err(e) => log::warn!("{source} {date_str}: 清理失效段失败(不影响本次结果): {e}"),
+            Err(e) => log::warn!(
+                "{source} {date_str}: failed to prune stale segments (no impact on this run): {e}"
+            ),
         }
 
         let p = SummaryProgress::base(source.to_string(), date_str, "all_done", total_segments);
@@ -275,7 +277,7 @@ impl<S: ProgressSink> DaySummaryRunner<S> {
         total_segments: u32,
     ) -> Result<u16> {
         if ai.summary_use_cloud() {
-            log::info!("日报：段总结走云端，跳过本地引擎启动");
+            log::info!("daily: segment summary using cloud, skipping local engine startup");
             return Ok(0);
         }
         let st = self.supervisor.status().await;
@@ -301,9 +303,11 @@ impl<S: ProgressSink> DaySummaryRunner<S> {
                     self.supervisor.touch();
                     return Ok(p);
                 }
-                log::info!("日报：已加载模型/参数与需求不符，重启换模");
+                log::info!("daily: loaded model/params do not match requirements, restarting with different model");
                 if let Err(e) = self.supervisor.stop().await {
-                    log::warn!("换模前 stop 引擎失败（继续尝试启动）: {e}");
+                    log::warn!(
+                        "failed to stop engine before model swap (will still try to start): {e}"
+                    );
                 }
             }
         }

@@ -22,6 +22,10 @@ src-tauri/gen/schemas/
 # release script 临时产物（每次 npm run release 都会重写，没必要 track）
 /latest.json
 
+# Closed-network Windows delivery folder (installer + adjacent offline assets)
+/offline-build/
+offline-assets/
+
 # 一次性脚本输出（dedupe_today_screenshots.py 等）
 test_screenshots/
 

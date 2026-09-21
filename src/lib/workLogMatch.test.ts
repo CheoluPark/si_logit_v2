@@ -42,6 +42,18 @@ function toDayActivities(sessions: TimelineSession[]): DayActivity[] {
 
 const todayActivities = toDayActivities(rawSessions);
 
+const localFixtureItem: WorkItem = {
+  key: "TEST-LOCAL-1",
+  summary: "OpenCode 및 Hindsight 한국어 AI 요약·채팅 도구 라우팅 개선",
+  status: "TEST FIXTURE",
+  assignee: "local",
+  issueType: "Work Item",
+  background: "한국어 AI 요약 및 채팅 도구 작업 흐름을 확인합니다.",
+  info: "오늘 수집된 활동으로 Work Log 매칭을 검증합니다.",
+  objective: "MCP 없이 기존 추천 Work Log 흐름을 점검합니다.",
+  output: "로컬 매칭 및 Work Log 검증 결과",
+};
+
 // ── mock_work_items() (worklog.rs)와 동일한 테스트 Work Item ─────────
 const mockItems: WorkItem[] = [
   {
@@ -80,6 +92,16 @@ const mockItems: WorkItem[] = [
 ];
 
 describe("keywordMatch (실제 오늘 활동 데이터 기반)", () => {
+  it("로컬 fixture: OpenCode 앱과 Hindsight 제목을 매칭하고 Work Log를 추천", () => {
+    const matched = keywordMatch(localFixtureItem.summary, todayActivities);
+    const text = generateWorkLog(localFixtureItem, matched);
+
+    expect(matched.some((a) => a.appName === "opencode")).toBe(true);
+    expect(matched.some((a) => a.title.includes("Hindsight"))).toBe(true);
+    expect(text).toContain(localFixtureItem.summary);
+    expect(text).toMatch(/총 \d+(?:시간(?: \d+분)?|분) 수행/);
+  });
+
   it("MOCK-101: OpenCode 활동과 매칭", () => {
     const matched = keywordMatch(mockItems[0].summary, todayActivities);
     expect(matched.length).toBeGreaterThan(0);

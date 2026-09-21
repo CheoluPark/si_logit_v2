@@ -6,7 +6,7 @@
 //! Two tables (columns in docs/design/database.md):
 //!   app_groups          —— the group itself: id, display name, category
 //!   app_group_members   —— process name → group id
-//! Both sync across devices and soft-delete.
+//! Both are local and soft-delete.
 //!
 //! Invariants:
 //!   - a process name that has been captured and not deleted has a live member
@@ -16,11 +16,6 @@
 //!     arrive at the same id, which is what lets sync merge them into one row;
 //!   - the category lives only in app_groups.category_id.
 
-// TODO(sync): route every write through a `with_tx` helper, then a `write` that
-// executes and enqueues as one step (`write_local` for tables that must not
-// sync). Closes the row-written-but-not-enqueued gap most write paths still
-// have, and lets the hand-built outbox payloads go. Own branch; ADR first.
-
 use std::cmp::Reverse;
 use std::collections::{HashMap, HashSet};
 
@@ -28,7 +23,6 @@ use rusqlite::OptionalExtension;
 use serde::Serialize;
 
 use crate::error::{Error, Result};
-use crate::repo::outbox::{enqueue, OutboxEntity, OutboxOp};
 use crate::repo::sql::FROM_MEMBER_GROUP;
 use crate::storage::{utc_now_rfc3339, DbPool, SqliteResultExt};
 
@@ -183,12 +177,11 @@ pub async fn list_groups(pool: &DbPool) -> Result<Vec<AppGroup>> {
     Ok(groups)
 }
 
-/// Soft-deletes an app group together with all its active members and enqueues
-/// each row, so other devices apply the same deletion. Activity rows are untouched.
+/// Soft-deletes an app group together with all its active members. Activity rows
+/// are untouched.
 ///
-/// "Soft" means `deleted_at` is set and the row stays: sync carries deletions as
-/// tombstoned upserts, so a physically removed row could never reach other
-/// devices. The tombstones still hold `display_name` and `category_id`.
+/// "Soft" means `deleted_at` is set and the row stays. The tombstones still hold
+/// `display_name` and `category_id`.
 ///
 /// Only [`purge_with_data`] calls this, as its last step after the app's
 /// activities, screenshots and OCR text were physically removed. Capturing the
@@ -197,8 +190,8 @@ pub async fn list_groups(pool: &DbPool) -> Result<Vec<AppGroup>> {
 /// a manual merge into another group does not — hence the remove dialog's
 /// "may reappear" warning.
 ///
-/// Idempotent: a repeat call matches zero rows and enqueues nothing. Members,
-/// group and their outbox rows commit in one transaction.
+/// Idempotent: a repeat call matches zero rows. Members and group commit in one
+/// transaction.
 pub async fn purge_with_members(pool: &DbPool, group_id: &str) -> Result<()> {
     let id = group_id.to_string();
     let updated_at = utc_now_rfc3339();
@@ -222,10 +215,7 @@ pub async fn purge_with_members(pool: &DbPool, group_id: &str) -> Result<()> {
                 out
             };
 
-            // 2. Delete each member softly, and enqueue to outbox so that
-            //    the remote LWW also sees the deletion.
-            //    `WHERE deleted_at IS NULL` ensures that if N=0 (already soft-deleted),
-            //    it won't be enqueued again.
+            // 2. Delete each member softly.
             let tx = conn.transaction().db()?;
             for m in &members {
                 let n = tx
@@ -235,36 +225,16 @@ pub async fn purge_with_members(pool: &DbPool, group_id: &str) -> Result<()> {
                         rusqlite::params![updated_at, m],
                     )
                     .db()?;
-                if n > 0 {
-                    enqueue(
-                        &tx,
-                        OutboxOp::Upsert,
-                        OutboxEntity::AppGroupMember,
-                        m,
-                        &serde_json::json!({ "processName": m }).to_string(),
-                    )
-                    .db()?;
-                }
+                let _ = n;
             }
 
-            // 3. Soft-delete the group and enqueue to outbox.
-            let n = tx
-                .execute(
-                    "UPDATE app_groups SET deleted_at = ?1, updated_at = ?1
+            // 3. Soft-delete the group.
+            tx.execute(
+                "UPDATE app_groups SET deleted_at = ?1, updated_at = ?1
                      WHERE id = ?2 AND deleted_at IS NULL",
-                    rusqlite::params![updated_at, id],
-                )
-                .db()?;
-            if n > 0 {
-                enqueue(
-                    &tx,
-                    OutboxOp::Upsert,
-                    OutboxEntity::AppGroup,
-                    &id,
-                    &serde_json::json!({ "groupId": id }).to_string(),
-                )
-                .db()?;
-            }
+                rusqlite::params![updated_at, id],
+            )
+            .db()?;
             tx.commit().db()?;
             Ok(())
         })
@@ -320,13 +290,8 @@ async fn active_member_names(pool: &DbPool, group_id: &str) -> Result<Vec<String
 /// Deliberately not done (the UI copy says so):
 ///   - generated daily / weekly / AI reports are not recomputed (they are
 ///     stored text);
-///   - nothing propagates to other devices; only the group soft-delete reaches
-///     the outbox. The tables deleted here either have no tombstone column or
-///     would wipe the peer's own data if propagated. Peers and the cloud day
-///     files keep their copies, and a cursor reset pulls them back.
-///     TODO: network-wide deletion — a `purge` sync entity (process names +
-///     purgedAt) that makes peers run this same local purge and rewrites the
-///     cloud day files; design in ADR-0001;
+///   - nothing propagates to other devices; the tables deleted here either have
+///     no tombstone column or would wipe a peer's own data;
 ///   - the two databases are not one transaction: if the memory-DB step fails,
 ///     the activity DB is already wiped.
 pub async fn purge_with_data(
@@ -440,7 +405,13 @@ pub async fn purge_with_data(
                 let ph = vec!["?"; names.len()].join(",");
                 let params: Vec<&dyn rusqlite::ToSql> =
                     names.iter().map(|s| s as &dyn rusqlite::ToSql).collect();
-                conn.execute(
+                let tx = conn.transaction().db()?;
+                tx.execute(
+                    &format!("DELETE FROM ocr_task_summaries WHERE app_id IN ({ph})"),
+                    params.as_slice(),
+                )
+                .db()?;
+                tx.execute(
                     &format!(
                         "DELETE FROM session_lines WHERE session_id IN
                          (SELECT id FROM text_sessions WHERE app_id IN ({ph}))"
@@ -448,23 +419,23 @@ pub async fn purge_with_data(
                     params.as_slice(),
                 )
                 .db()?;
-                conn.execute(
+                tx.execute(
                     &format!("DELETE FROM text_sessions WHERE app_id IN ({ph})"),
                     params.as_slice(),
                 )
                 .db()?;
-                conn.execute(
+                tx.execute(
                     &format!("DELETE FROM frames WHERE app_id IN ({ph})"),
                     params.as_slice(),
                 )
                 .db()?;
+                tx.commit().db()?;
                 Ok(())
             })
             .await?;
     }
 
-    // Soft delete for the group and its members,
-    // along with the outbox (inside purge_with_members function)
+    // Soft delete for the group and its members.
     purge_with_members(pool, group_id).await?;
 
     // Delete orphan screenshots from the disk.
@@ -529,7 +500,7 @@ pub async fn merge(pool: &DbPool, source_process_name: &str, target_group_id: &s
                 return Ok(Ok(()));
             }
 
-            // Move `src` into the target group and record the change for sync.
+            // Move `src` into the target group.
             // The write is a single upsert covering three states of `src`: no row
             // → insert; live in another group → repoint; tombstoned → repoint and
             // revive (reached when the pairing page is stale, or a peer's
@@ -543,15 +514,6 @@ pub async fn merge(pool: &DbPool, source_process_name: &str, target_group_id: &s
                    updated_at = excluded.updated_at,
                    deleted_at = NULL",
                 rusqlite::params![src, tgt, updated_at],
-            )
-            .db()?;
-
-            enqueue(
-                &tx,
-                OutboxOp::Upsert,
-                OutboxEntity::AppGroupMember,
-                &src,
-                &serde_json::json!({ "processName": src }).to_string(),
             )
             .db()?;
 
@@ -620,9 +582,8 @@ pub async fn unmerge(pool: &DbPool, process_name: &str) -> Result<()> {
 /// its user-defined display name and updates only its category, timestamp, and
 /// deletion state.
 ///
-/// Both the group and member changes are queued for sync. Takes a transaction
-/// rather than a connection: the two rows and their two outbox entries have to
-/// land together or not at all, and the parameter type is what enforces it.
+/// Takes a transaction rather than a connection so the group and member changes
+/// land together or not at all.
 fn restore_solo_group(
     tx: &rusqlite::Transaction<'_>,
     process_name: &str,
@@ -631,7 +592,7 @@ fn restore_solo_group(
 ) -> rusqlite::Result<()> {
     // `WHERE` on the conflict branch: a live group that already carries this
     // category is left alone, so its `updated_at` is not bumped for nothing.
-    let n = tx.execute(
+    tx.execute(
         "INSERT INTO app_groups(id, display_name, category_id, updated_at, deleted_at)
          VALUES(?, ?, ?, ?, NULL)
          ON CONFLICT(id) DO UPDATE SET
@@ -642,17 +603,8 @@ fn restore_solo_group(
             OR app_groups.category_id IS NOT excluded.category_id",
         rusqlite::params![process_name, process_name, category_id, updated_at],
     )?;
-    if n > 0 {
-        enqueue(
-            tx,
-            OutboxOp::Upsert,
-            OutboxEntity::AppGroup,
-            process_name,
-            &serde_json::json!({ "groupId": process_name }).to_string(),
-        )?;
-    }
 
-    let n = tx.execute(
+    tx.execute(
         "INSERT INTO app_group_members(process_name, group_id, updated_at, deleted_at)
          VALUES(?, ?, ?, NULL)
          ON CONFLICT(process_name) DO UPDATE SET
@@ -663,21 +615,12 @@ fn restore_solo_group(
             OR app_group_members.group_id IS NOT excluded.group_id",
         rusqlite::params![process_name, process_name, updated_at],
     )?;
-    if n > 0 {
-        enqueue(
-            tx,
-            OutboxOp::Upsert,
-            OutboxEntity::AppGroupMember,
-            process_name,
-            &serde_json::json!({ "processName": process_name }).to_string(),
-        )?;
-    }
 
     Ok(())
 }
 
 /// Renames a group: only its display name and timestamp change; category and
-/// members are untouched. The change is queued for sync.
+/// members are untouched.
 pub async fn rename(pool: &DbPool, group_id: &str, new_name: &str) -> Result<()> {
     let id = group_id.to_string();
     let name = new_name.to_string();
@@ -690,23 +633,12 @@ pub async fn rename(pool: &DbPool, group_id: &str, new_name: &str) -> Result<()>
             // `updated_at` arbitrates last-write-wins, so it has to mean "the content
             // changed", not "the row was written": bumping it for an unchanged name
             // would win the comparison against a peer that really did rename it.
-            let n = tx
-                .execute(
-                    "UPDATE app_groups SET display_name = ?2, updated_at = ?3
+            tx.execute(
+                "UPDATE app_groups SET display_name = ?2, updated_at = ?3
                      WHERE id = ?1 AND display_name IS NOT ?2",
-                    rusqlite::params![id, name, updated_at],
-                )
-                .db()?;
-            if n > 0 {
-                enqueue(
-                    &tx,
-                    OutboxOp::Upsert,
-                    OutboxEntity::AppGroup,
-                    &id,
-                    &serde_json::json!({ "groupId": id }).to_string(),
-                )
-                .db()?;
-            }
+                rusqlite::params![id, name, updated_at],
+            )
+            .db()?;
             tx.commit().db()?;
             Ok(())
         })
@@ -717,7 +649,7 @@ pub async fn rename(pool: &DbPool, group_id: &str, new_name: &str) -> Result<()>
 /// Backend of the category picker: set a group's category, `None` to clear it.
 /// Only `app_groups.category_id` changes — the source of truth for classification;
 /// stats pick it up through the member → group chain. Unknown or tombstoned
-/// category ids are rejected with `InvalidInput`. The change is queued for sync.
+/// category ids are rejected with `InvalidInput`.
 pub async fn assign_category(
     pool: &DbPool,
     group_id: &str,
@@ -756,24 +688,12 @@ pub async fn assign_category(
             // clearing an already-cleared one included — `IS NOT` is NULL-safe, `!=`
             // is not. See `rename` for why an unchanged write must not bump
             // `updated_at`.
-            let n = tx
-                .execute(
-                    "UPDATE app_groups SET category_id = ?2, updated_at = ?3
+            tx.execute(
+                "UPDATE app_groups SET category_id = ?2, updated_at = ?3
                      WHERE id = ?1 AND category_id IS NOT ?2",
-                    rusqlite::params![id, cat, now],
-                )
-                .db()?;
-            if n > 0 {
-                enqueue(
-                    &tx,
-                    OutboxOp::Upsert,
-                    OutboxEntity::AppGroup,
-                    &id,
-                    &serde_json::json!({ "groupId": id }).to_string(),
-                )
-                .db()?;
-            }
-
+                rusqlite::params![id, cat, now],
+            )
+            .db()?;
             tx.commit().db()?;
             Ok(())
         })
@@ -822,8 +742,8 @@ pub async fn group_id_for(pool: &DbPool, process_name: &str) -> Result<Option<St
 /// one lookup and no writes.
 ///
 /// Otherwise creates them: the group id is the canonical name from the alias
-/// table (or the process name itself), the category comes from the built-in
-/// rules, and both rows are queued for sync. A tombstoned member row (the app
+/// table (or the process name itself), and the category comes from the built-in
+/// rules. A tombstoned member row (the app
 /// was deleted) is revived here, which is why a deleted app reappears when it
 /// is captured again. An existing group keeps its name and category.
 pub async fn ensure_group(pool: &DbPool, process_name: &str) -> Result<()> {
@@ -872,15 +792,6 @@ pub async fn ensure_group(pool: &DbPool, process_name: &str) -> Result<()> {
                 rusqlite::params![group_id, display_name, builtin_cat, now],
             )
             .db()?;
-            enqueue(
-                &tx,
-                OutboxOp::Upsert,
-                OutboxEntity::AppGroup,
-                &group_id,
-                &serde_json::json!({ "groupId": group_id }).to_string(),
-            )
-            .db()?;
-
             tx.execute(
                 "INSERT INTO app_group_members(process_name, group_id, updated_at, deleted_at)
                  VALUES(?, ?, ?, NULL)
@@ -889,14 +800,6 @@ pub async fn ensure_group(pool: &DbPool, process_name: &str) -> Result<()> {
                    updated_at = excluded.updated_at,
                    deleted_at = NULL",
                 rusqlite::params![p, group_id, now],
-            )
-            .db()?;
-            enqueue(
-                &tx,
-                OutboxOp::Upsert,
-                OutboxEntity::AppGroupMember,
-                &p,
-                &serde_json::json!({ "processName": p }).to_string(),
             )
             .db()?;
             tx.commit().db()?;
@@ -914,8 +817,7 @@ mod tests {
 
     /// 测 [`purge_with_members`]：
     /// - 组 + 所有活着的成员全部软删；
-    /// - 组和每个成员各入一条 outbox，对端才能拉到同样的删除；
-    /// - 幂等：再调一次 outbox 不再增长。
+    /// - 幂等：再调一次不再改变状态。
     #[tokio::test]
     async fn purge_with_members_soft_deletes_group_members() {
         let pool = fresh_test_pool().await;
@@ -931,22 +833,8 @@ mod tests {
             "成员 Code.exe 应被软删"
         );
 
-        // outbox：1 条 group + 2 条 member
-        let outbox_after = outbox_summary(&pool).await;
-        assert!(
-            outbox_after.group_count == 1,
-            "至少应有 1 条 app_group outbox"
-        );
-        assert_eq!(
-            outbox_after.member_count, 2,
-            "应有 2 条 app_group_member outbox"
-        );
-
-        // 幂等：再调一次，outbox 不应再增长
-        let before = outbox_total(&pool).await;
+        // 幂等：再调一次
         purge_with_members(&pool, "vscode").await.unwrap();
-        let after = outbox_total(&pool).await;
-        assert_eq!(before, after, "幂等：第二次调用不该写新 outbox");
     }
 
     async fn seed_vscode_group(pool: &DbPool) {
@@ -1013,49 +901,6 @@ mod tests {
             .unwrap()
     }
 
-    struct OutboxSummary {
-        group_count: i64,
-        member_count: i64,
-    }
-
-    async fn outbox_summary(pool: &DbPool) -> OutboxSummary {
-        pool.0
-            .call(|conn| {
-                let g: i64 = conn
-                    .query_row(
-                        "SELECT COUNT(*) FROM sync_outbox WHERE entity = 'app_group'",
-                        [],
-                        |r| r.get(0),
-                    )
-                    .db()?;
-                let m: i64 = conn
-                    .query_row(
-                        "SELECT COUNT(*) FROM sync_outbox WHERE entity = 'app_group_member'",
-                        [],
-                        |r| r.get(0),
-                    )
-                    .db()?;
-                Ok(OutboxSummary {
-                    group_count: g,
-                    member_count: m,
-                })
-            })
-            .await
-            .unwrap()
-    }
-
-    async fn outbox_total(pool: &DbPool) -> i64 {
-        pool.0
-            .call(|conn| {
-                let n: i64 = conn
-                    .query_row("SELECT COUNT(*) FROM sync_outbox", [], |r| r.get(0))
-                    .db()?;
-                Ok(n)
-            })
-            .await
-            .unwrap()
-    }
-
     /// 读某成员当前 active 的 group_id（deleted_at IS NULL）；无 active 行返回 None。
     async fn active_group_of(pool: &DbPool, process_name: &str) -> Option<String> {
         let pn = process_name.to_string();
@@ -1103,11 +948,11 @@ mod tests {
     }
 
     /// 测 [`merge`]：
-    /// - 成员改指向目标组，且只入一条 member outbox；
-    /// - 已在目标组时再 merge 是纯 no-op，outbox 不增长；
+    /// - 成员改指向目标组；
+    /// - 已在目标组时再 merge 是纯 no-op；
     /// - 目标组已软删 → `InvalidInput`，成员留在原地。
     #[tokio::test]
-    async fn merge_repoints_member_and_enqueues_outbox() {
+    async fn merge_repoints_member_and_is_idempotent() {
         let pool = fresh_test_pool().await;
         pool.0
             .call(|conn| {
@@ -1140,21 +985,8 @@ mod tests {
             Some("vscode"),
             "merge 后成员应指向目标组"
         );
-        // 裸 INSERT seed 不产生 outbox，所以这里的计数就是 merge 一次的净产出。
-        let ob = outbox_summary(&pool).await;
-        assert_eq!(
-            ob.member_count, 1,
-            "merge 应写 1 条 app_group_member outbox"
-        );
-
-        // 幂等：已经在目标组，再 merge 一次应是纯 no-op（不写 DB 也不写 outbox）
-        let before = outbox_total(&pool).await;
+        // 幂等：已经在目标组，再 merge 一次应是纯 no-op。
         merge(&pool, "chrome.exe", "vscode").await.unwrap();
-        assert_eq!(
-            outbox_total(&pool).await,
-            before,
-            "同组重复 merge 不应产生新 outbox"
-        );
 
         // 软删的目标组视同不存在：拒绝并且成员不动
         let err = merge(&pool, "chrome.exe", "dead").await.unwrap_err();
@@ -1173,7 +1005,6 @@ mod tests {
     /// - 单成员组已软删 → ON CONFLICT 复活，但**不**覆盖用户改过的 display_name
     /// - 复活时 category 跟随「拆出前所在组」的分类（用户拆开后分类不丢）
     /// - 单成员组从未存在 → 新建，display_name = process_name
-    /// - 组和成员各入一条 outbox
     #[tokio::test]
     async fn unmerge_revives_solo_group_keeping_display_name_and_carrying_category() {
         let pool = fresh_test_pool().await;
@@ -1219,9 +1050,6 @@ mod tests {
             Some("Code.exe"),
             "成员应回到自己的单成员组"
         );
-        let ob = outbox_summary(&pool).await;
-        assert_eq!(ob.group_count, 1, "复活组应写 1 条 app_group outbox");
-        assert_eq!(ob.member_count, 1, "成员改指向应写 1 条 member outbox");
 
         // 2) 单成员组从未存在 → 全新 INSERT，display_name 用 process_name 本身
         unmerge(&pool, "OtherApp").await.unwrap();
@@ -1237,14 +1065,8 @@ mod tests {
             Some("OtherApp")
         );
 
-        // 3) 边界：process_name 没有 active member 行 → 静默 no-op，不写 outbox
-        let before = outbox_total(&pool).await;
+        // 3) 边界：process_name 没有 active member 行 → 静默 no-op
         unmerge(&pool, "从未出现过的进程").await.unwrap();
-        assert_eq!(
-            outbox_total(&pool).await,
-            before,
-            "未知 process_name 的 unmerge 应是 no-op"
-        );
     }
 
     /// 测 [`list_groups`] 组装逻辑：
@@ -1366,13 +1188,11 @@ mod tests {
     }
 
     /// 测 [`assign_category`] 的分类校验：分类不存在 → 返回 Err，
-    /// 组的分类保持原值，outbox 不增长。
+    /// 组的分类保持原值。
     #[tokio::test]
     async fn assign_category_rejects_unknown_category() {
         let pool = fresh_test_pool().await;
         seed_vscode_group(&pool).await;
-        let outbox_before = outbox_total(&pool).await;
-
         let res = assign_category(&pool, "vscode", Some("no-such-cat".to_string())).await;
         assert!(
             matches!(res, Err(Error::InvalidInput(_))),
@@ -1398,15 +1218,9 @@ mod tests {
             Some("code"),
             "回滚后组的 category_id 应保持原值"
         );
-        assert_eq!(
-            outbox_total(&pool).await,
-            outbox_before,
-            "回滚后 outbox 不应有新增行"
-        );
     }
 
-    /// 测 [`assign_category`] 的成功路径：设分类、清分类各改一次组行，
-    /// 各入一条组 outbox。
+    /// 测 [`assign_category`] 的成功路径：设分类、清分类各改一次组行。
     #[tokio::test]
     async fn assign_category_sets_and_clears_group_category() {
         let pool = fresh_test_pool().await;
@@ -1418,23 +1232,13 @@ mod tests {
         let (_, cat, deleted) = group_state(&pool, "vscode").await.unwrap();
         assert_eq!(cat.as_deref(), Some("browse"), "分类应改为 browse");
         assert!(!deleted);
-        assert_eq!(
-            outbox_summary(&pool).await.group_count,
-            1,
-            "设分类应入 1 条组 outbox"
-        );
 
         assign_category(&pool, "vscode", None).await.unwrap();
         let (_, cat, _) = group_state(&pool, "vscode").await.unwrap();
         assert_eq!(cat, None, "None 应清掉分类");
-        assert_eq!(
-            outbox_summary(&pool).await.group_count,
-            2,
-            "清分类应再入 1 条组 outbox"
-        );
     }
 
-    /// 测 [`rename`]：只改显示名，分类不动，入 1 条组 outbox。
+    /// 测 [`rename`]：只改显示名，分类不动。
     #[tokio::test]
     async fn rename_updates_display_name_only() {
         let pool = fresh_test_pool().await;
@@ -1446,15 +1250,10 @@ mod tests {
         assert_eq!(name, "VS Code");
         assert_eq!(cat.as_deref(), Some("code"), "改名不该动分类");
         assert!(!deleted);
-        assert_eq!(
-            outbox_summary(&pool).await.group_count,
-            1,
-            "改名应入 1 条组 outbox"
-        );
     }
 
     /// 测 [`unmerge`] 拒绝组名来源的那个成员：它要回的单成员组就是当前这个组，
-    /// 没有落脚点。返回 `InvalidInput`，一行不动、outbox 不增长。
+    /// 没有落脚点。返回 `InvalidInput`，一行不动。
     #[tokio::test]
     async fn unmerge_rejects_the_member_the_group_is_named_after() {
         let pool = fresh_test_pool().await;
@@ -1472,8 +1271,6 @@ mod tests {
             })
             .await
             .unwrap();
-        let before = outbox_total(&pool).await;
-
         let err = unmerge(&pool, "vscode").await.unwrap_err();
         assert!(
             matches!(err, Error::InvalidInput(_)),
@@ -1487,14 +1284,13 @@ mod tests {
                 "拒绝后三个成员都应留在原组（尤其不能重演旧的「解散」行为）"
             );
         }
-        assert_eq!(outbox_total(&pool).await, before, "拒绝不该写任何 outbox");
     }
 
     // ───────────── ensure_group:抓屏入口 ─────────────
 
     /// 测 [`ensure_group`]：抓屏每 tick 调一次的入口，覆盖它的四条路径。
-    /// - 陌生进程名 → 建组 + 成员，各入一条 outbox；
-    /// - 再调一次 → 快速出口，零写入；
+    /// - 陌生进程名 → 建组 + 成员；
+    /// - 再调一次 → 快速出口；
     /// - 成员被软删后再调 → 复活（删过的应用再被抓到会重新出现，出处就是这里）；
     /// - 别名表命中 → 组 id 用 canonical 名，分类按内置规则填上。
     #[tokio::test]
@@ -1509,34 +1305,18 @@ mod tests {
             "新建组的显示名用进程名本身，无内置分类命中时分类为空"
         );
         assert_eq!(active_group_of(&pool, "Zed").await.as_deref(), Some("Zed"));
-        let ob = outbox_summary(&pool).await;
-        assert_eq!(ob.group_count, 1, "建组应入 1 条组 outbox");
-        assert_eq!(ob.member_count, 1, "建成员应入 1 条成员 outbox");
-
-        // 2) 幂等：已有活着的成员行 → 快速出口，不写库不入队
-        let before = outbox_total(&pool).await;
+        // 2) 幂等：已有活着的成员行 → 快速出口
         ensure_group(&pool, "Zed").await.unwrap();
-        assert_eq!(
-            outbox_total(&pool).await,
-            before,
-            "已存在时应直接返回，不产生新 outbox"
-        );
 
         // 3) 删过之后再被抓到 → 复活
         purge_with_members(&pool, "Zed").await.unwrap();
         assert!(group_deleted(&pool, "Zed").await && member_deleted(&pool, "Zed").await);
-        let before = outbox_total(&pool).await;
         ensure_group(&pool, "Zed").await.unwrap();
         assert!(!group_deleted(&pool, "Zed").await, "组应被复活");
         assert_eq!(
             active_group_of(&pool, "Zed").await.as_deref(),
             Some("Zed"),
             "成员行应被复活并指回自己的组"
-        );
-        assert_eq!(
-            outbox_total(&pool).await - before,
-            2,
-            "复活应入组 + 成员各一条 outbox"
         );
 
         // 4) 别名表命中 → 组 id 是 canonical 名，不是进程名本身；
@@ -1594,6 +1374,21 @@ mod tests {
                 )
                 .db()?;
                 let sid = conn.last_insert_rowid();
+                let guid = format!("purge-guid-{p2}-{sid}");
+                conn.execute(
+                    "UPDATE text_sessions SET guid = ?1 WHERE id = ?2",
+                    rusqlite::params![guid, sid],
+                )
+                .db()?;
+                conn.execute(
+                    "INSERT INTO ocr_task_summaries(
+                         source_session_guid, local_date, started_ts, ended_ts,
+                         app_id, title, summary, status, attempts, updated_ts
+                     ) VALUES(?1, '2026-05-15', '2026-05-15T10:00:00Z',
+                              '2026-05-15T10:05:00Z', ?2, 't', 'compact', 'success', 0, 'now')",
+                    rusqlite::params![guid, p2],
+                )
+                .db()?;
                 conn.execute(
                     "INSERT INTO session_lines(session_id, line_no, text, first_path, first_ts)
                      VALUES(?1, 0, ?2, ?3, '2026-05-15T10:00:00Z')",
@@ -1691,6 +1486,29 @@ mod tests {
             1,
             "隔壁应用的文字应还在"
         );
+        let ledger_counts = mem
+            .0
+            .call(|conn| {
+                let removed: i64 = conn
+                    .query_row(
+                        "SELECT COUNT(*) FROM ocr_task_summaries
+                         WHERE app_id IN ('Code', 'Code.exe')",
+                        [],
+                        |r| r.get(0),
+                    )
+                    .db()?;
+                let spared: i64 = conn
+                    .query_row(
+                        "SELECT COUNT(*) FROM ocr_task_summaries WHERE app_id = 'Chrome'",
+                        [],
+                        |r| r.get(0),
+                    )
+                    .db()?;
+                Ok((removed, spared))
+            })
+            .await
+            .unwrap();
+        assert_eq!(ledger_counts, (0, 1), "compaction ledger follows app purge");
 
         // 文件系统
         assert!(!dir.join("code.png").exists(), "截图文件应被删除");

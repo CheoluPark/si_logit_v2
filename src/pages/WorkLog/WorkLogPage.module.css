@@ -150,24 +150,6 @@
   font-size: 14px;
 }
 
-/* ---- Success Banner ---- */
-
-.successBanner {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 12px 16px;
-  background: rgba(20, 184, 166, 0.1);
-  color: #14b8a6;
-  border-radius: 8px;
-  font-size: 14px;
-  font-weight: var(--font-weight-medium);
-}
-
-.successBanner svg {
-  flex-shrink: 0;
-}
-
 /* ---- Work Item Card ---- */
 
 .itemCard {
@@ -179,10 +161,6 @@
   flex-direction: column;
   gap: 16px;
   transition: border-color 0.15s;
-}
-
-.itemCardRegistered {
-  border-color: rgba(20, 184, 166, 0.3);
 }
 
 .itemHeader {
@@ -427,11 +405,6 @@
   font-size: 13px;
   line-height: 1.5;
   margin-bottom: 12px;
-}
-
-.errorText {
-  color: var(--status-error);
-  font-size: 13px;
 }
 
 /* ---- Copy Button (compact) ---- */

@@ -103,19 +103,6 @@ pub enum Error {
     #[error("drive scope insufficient：当前登录缺少 drive.appdata 权限，请重新【用 Google 登录】")]
     DriveScopeInsufficient,
 
-    // ───────────── 同步合并阶段 ─────────────
-    /// 远端 JSON payload 解析失败（categories.json / app_groups.json 等）
-    #[error("sync parse {kind} JSON: {source}")]
-    SyncParse {
-        kind: &'static str,
-        #[source]
-        source: serde_json::Error,
-    },
-
-    /// ndjson 文件 UTF-8 解码失败
-    #[error("sync ndjson utf8: {0}")]
-    SyncUtf8(#[from] std::str::Utf8Error),
-
     // ───────────── 用户输入 ─────────────
     #[error("invalid input: {0}")]
     InvalidInput(&'static str),
@@ -124,11 +111,6 @@ pub enum Error {
     /// 取 String 而非 &'static str：消息里要带运行期值（"段下标越界：5"）
     #[error("invalid input: {0}")]
     InvalidInputDyn(String),
-
-    /// sync_now 跑完了但 push/pull 内部记下了 last_error（多半是 token 不可用）。
-    /// 用 String 因为这里聚合的是「内部 push/pull 各自塞回 status 的人类可读信息」，不需要 caller match。
-    #[error("sync incomplete: {0}")]
-    SyncIncomplete(String),
 
     // ───────────── AI 引擎相关 ─────────────
     /// llama.cpp binary 下载 / 校验 / 解压失败。`stage` 用静态字符串区分阶段
@@ -285,18 +267,6 @@ mod tests {
         assert!(src.downcast_ref::<reqwest::Error>().is_some());
     }
 
-    /// Utf8Error → SyncUtf8 变体。构造方式对应真实场景：
-    /// ndjson 分块读取把一个多字节汉字从中间截断。
-    #[test]
-    fn sync_utf8_from_invalid_bytes() {
-        let truncated = &"好".as_bytes()[..2]; // 3 字节字符只取前 2 字节 → 非法 UTF-8
-        let inner = std::str::from_utf8(truncated).unwrap_err();
-        let inner_msg = inner.to_string();
-        let e: Error = inner.into();
-        assert!(matches!(e, Error::SyncUtf8(_)));
-        assert!(e.to_string().contains(&inner_msg));
-    }
-
     /// OAuthHttp：结构体变体三个字段必须全部出现在文案里 ——
     /// 排障时 operation/status/body 缺一个都定位不了问题。
     #[test]
@@ -339,23 +309,6 @@ mod tests {
         assert!(msg.contains("upload"));
         assert!(msg.contains("507"));
         assert!(msg.contains("storageQuotaExceeded"));
-    }
-
-    /// SyncParse：kind 标明是哪个远端文件坏了，source 保留 serde 细节。
-    /// 注意它不是 #[from]，必须手工构造 —— 也顺带验证了字段搭配可用。
-    #[test]
-    fn sync_parse_names_kind_and_keeps_source() {
-        let inner = serde_json::from_str::<serde_json::Value>("[broken").unwrap_err();
-        let inner_msg = inner.to_string();
-        let e = Error::SyncParse {
-            kind: "categories",
-            source: inner,
-        };
-        let msg = e.to_string();
-        assert!(msg.contains("categories"), "文案必须指明是哪类远端文件");
-        assert!(msg.contains(&inner_msg));
-        let src = e.source().expect("SyncParse 应保留 source");
-        assert!(src.downcast_ref::<serde_json::Error>().is_some());
     }
 
     /// stage+details 型变体（EngineBinary / ImageProcessing）：

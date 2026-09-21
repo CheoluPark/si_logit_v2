@@ -160,7 +160,7 @@ pub fn macos_recover_title(pid: u32) -> Option<String> {
             Err(e) => {
                 // 没权限 / SCK 不可用：退避，别每 tick 白烧 100ms
                 log::debug!(
-                    "SCK 补取标题失败，退避 {}s：{e:?}",
+                    "SCK title recovery failed, backing off {}s: {e:?}",
                     SCK_TITLE_BACKOFF.as_secs()
                 );
                 if let Ok(mut blocked) = SCK_TITLE_BLOCKED_UNTIL.lock() {

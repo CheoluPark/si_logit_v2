@@ -603,7 +603,10 @@ async fn send_healing(
                 {
                     return Err(e);
                 }
-                log::warn!("chat 云端 400,按错误信息自愈后重试(第 {} 轮)", round + 1);
+                log::warn!(
+                    "chat cloud 400, self-healing and retrying (round {})",
+                    round + 1
+                );
                 round += 1;
             }
         }

@@ -6,6 +6,7 @@
 //!
 //! 本模块只提供连接与 schema;帧登记见 [`frames`],L3 折叠与 FTS 见 [`sessions`]。
 
+pub mod compaction;
 pub mod digest;
 pub mod frames;
 pub mod resident;
@@ -217,9 +218,27 @@ impl MemoryDb {
                          ON chat_messages(guid);
                      CREATE UNIQUE INDEX IF NOT EXISTS idx_sessions_guid
                          ON text_sessions(guid);
+                     CREATE TABLE IF NOT EXISTS ocr_task_summaries (
+                         source_session_guid TEXT PRIMARY KEY,
+                         legacy_source_session_id INTEGER,
+                         local_date TEXT NOT NULL,
+                         started_ts TEXT NOT NULL,
+                         ended_ts TEXT NOT NULL,
+                         app_id TEXT,
+                         title TEXT,
+                         summary TEXT NOT NULL DEFAULT '',
+                         status TEXT NOT NULL DEFAULT 'error',
+                         attempts INTEGER NOT NULL DEFAULT 0,
+                         last_error TEXT,
+                         updated_ts TEXT NOT NULL
+                     );
+                     CREATE INDEX IF NOT EXISTS idx_ocr_task_summaries_status
+                         ON ocr_task_summaries(status, attempts, ended_ts);
+
                      PRAGMA user_version = 5;",
                 )
                 .db()?;
+                migrate_ocr_task_summaries(conn).db()?;
                 // ── v5 一次性迁移:存量线性消息串成父子链(树的平凡形态)──
                 // 只在旧世代跑:树世代里 parent_guid 为 NULL 是"会话根/根的
                 // 编辑分支"的合法状态,重跑会把它们错误串到别的消息底下。
@@ -240,6 +259,60 @@ impl MemoryDb {
             .await?;
         Ok(())
     }
+}
+
+/// v1 ledger used reusable `text_sessions.id`; migrate it to immutable guid.
+/// Orphaned old rows keep their summary under a legacy key instead of being
+/// allowed to collide with a future SQLite row id.
+fn migrate_ocr_task_summaries(conn: &mut rusqlite::Connection) -> rusqlite::Result<()> {
+    let columns = {
+        let mut stmt = conn.prepare("PRAGMA table_info(ocr_task_summaries)")?;
+        let rows = stmt.query_map([], |row| row.get::<_, String>(1))?;
+        rows.collect::<rusqlite::Result<Vec<_>>>()?
+    };
+    let tx = conn.transaction()?;
+    if columns.iter().any(|c| c == "source_session_id") {
+        tx.execute_batch(
+            "DROP TABLE IF EXISTS ocr_task_summaries_v2;
+             CREATE TABLE ocr_task_summaries_v2 (
+                 source_session_guid TEXT PRIMARY KEY,
+                 legacy_source_session_id INTEGER,
+                 local_date TEXT NOT NULL,
+                 started_ts TEXT NOT NULL,
+                 ended_ts TEXT NOT NULL,
+                 app_id TEXT,
+                 title TEXT,
+                 summary TEXT NOT NULL DEFAULT '',
+                 status TEXT NOT NULL DEFAULT 'error',
+                 attempts INTEGER NOT NULL DEFAULT 0,
+                 last_error TEXT,
+                 updated_ts TEXT NOT NULL
+             );",
+        )?;
+        tx.execute(
+            "INSERT INTO ocr_task_summaries_v2(
+                 source_session_guid, legacy_source_session_id, local_date,
+                 started_ts, ended_ts, app_id, title, summary, status,
+                 attempts, last_error, updated_ts
+             )
+             SELECT COALESCE(NULLIF(s.guid, ''), 'legacy:' || c.source_session_id),
+                    c.source_session_id, c.local_date, c.started_ts, c.ended_ts,
+                    c.app_id, c.title, c.summary, c.status, c.attempts,
+                    c.last_error, c.updated_ts
+               FROM ocr_task_summaries c
+               LEFT JOIN text_sessions s ON s.id = c.source_session_id",
+            [],
+        )?;
+        tx.execute_batch(
+            "DROP TABLE ocr_task_summaries;
+             ALTER TABLE ocr_task_summaries_v2 RENAME TO ocr_task_summaries;",
+        )?;
+    }
+    tx.execute_batch(
+        "CREATE INDEX IF NOT EXISTS idx_ocr_task_summaries_status
+             ON ocr_task_summaries(status, attempts, ended_ts);",
+    )?;
+    tx.commit()
 }
 
 #[cfg(test)]
@@ -270,5 +343,39 @@ mod tests {
         })
         .await
         .unwrap();
+    }
+
+    #[test]
+    fn old_compaction_ledger_migrates_to_guid_identity() {
+        let mut conn = rusqlite::Connection::open_in_memory().unwrap();
+        conn.execute_batch(
+            "CREATE TABLE text_sessions(
+                 id INTEGER PRIMARY KEY, guid TEXT, text TEXT, ended_ts TEXT
+             );
+             CREATE TABLE ocr_task_summaries(
+                 source_session_id INTEGER PRIMARY KEY,
+                 local_date TEXT NOT NULL, started_ts TEXT NOT NULL,
+                 ended_ts TEXT NOT NULL, app_id TEXT, title TEXT,
+                 summary TEXT NOT NULL, status TEXT NOT NULL, attempts INTEGER NOT NULL,
+                 last_error TEXT, updated_ts TEXT NOT NULL
+             );
+             INSERT INTO text_sessions VALUES(7, 'immutable-guid', 'ocr', 't1');
+             INSERT INTO ocr_task_summaries VALUES
+                 (7, '2026-09-20', 't0', 't1', NULL, NULL, 'summary',
+                  'success', 0, NULL, 'now');",
+        )
+        .unwrap();
+
+        migrate_ocr_task_summaries(&mut conn).unwrap();
+
+        let row: (String, i64) = conn
+            .query_row(
+                "SELECT source_session_guid, legacy_source_session_id
+                   FROM ocr_task_summaries",
+                [],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!(row, ("immutable-guid".into(), 7));
     }
 }

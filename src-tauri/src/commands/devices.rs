@@ -30,7 +30,7 @@ pub async fn update_self_device(
         Some(row.color.clone()),
         Some(row.icon.clone()),
     ) {
-        log::warn!("device.json 更新失败（DB 已更新）: {e}");
+        log::warn!("Failed to update device.json (DB already updated): {e}");
     }
 
     Ok(row)

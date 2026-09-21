@@ -18,7 +18,6 @@ use std::collections::HashMap;
 use std::sync::OnceLock;
 
 use crate::error::Result;
-use crate::repo::outbox::{enqueue, OutboxEntity, OutboxOp};
 use crate::storage::{utc_now_rfc3339, DbPool, SqliteResultExt};
 
 const ALIASES_JSON: &str = include_str!("../../data/cross_os_app_aliases.json");
@@ -113,7 +112,9 @@ pub async fn pair_existing(pool: &DbPool) -> Result<u64> {
         }
         if let Err(e) = pair_one(pool, &process_name, canonical).await {
             // One failure must not stop the batch; log it and move on.
-            log::warn!("cross_os pair 失败 process_name={process_name} canonical={canonical}: {e}");
+            log::warn!(
+                "cross_os pair failed process_name={process_name} canonical={canonical}: {e}"
+            );
             continue;
         }
         merged += 1;
@@ -172,28 +173,12 @@ async fn pair_one(pool: &DbPool, process_name: &str, canonical: &str) -> Result<
                 rusqlite::params![canon, canon, builtin_cat, updated_at],
             )
             .db()?;
-            enqueue(
-                &tx,
-                OutboxOp::Upsert,
-                OutboxEntity::AppGroup,
-                &canon,
-                &serde_json::json!({ "groupId": canon }).to_string(),
-            )
-            .db()?;
 
             // Step 2: point the member at the canonical group.
             tx.execute(
                 "UPDATE app_group_members SET group_id = ?2, updated_at = ?3, deleted_at = NULL
                  WHERE process_name = ?1",
                 rusqlite::params![pn, canon, updated_at],
-            )
-            .db()?;
-            enqueue(
-                &tx,
-                OutboxOp::Upsert,
-                OutboxEntity::AppGroupMember,
-                &pn,
-                &serde_json::json!({ "processName": pn }).to_string(),
             )
             .db()?;
 
@@ -210,23 +195,12 @@ async fn pair_one(pool: &DbPool, process_name: &str, canonical: &str) -> Result<
                 .db()?
                 .unwrap_or(false);
             if !has_other_members {
-                let n = tx
-                    .execute(
-                        "UPDATE app_groups SET deleted_at = ?1, updated_at = ?1
+                tx.execute(
+                    "UPDATE app_groups SET deleted_at = ?1, updated_at = ?1
                          WHERE id = ?2 AND deleted_at IS NULL",
-                        rusqlite::params![updated_at, pn],
-                    )
-                    .db()?;
-                if n > 0 {
-                    enqueue(
-                        &tx,
-                        OutboxOp::Upsert,
-                        OutboxEntity::AppGroup,
-                        &pn,
-                        &serde_json::json!({ "groupId": pn }).to_string(),
-                    )
-                    .db()?;
-                }
+                    rusqlite::params![updated_at, pn],
+                )
+                .db()?;
             }
             tx.commit().db()?;
             Ok(())

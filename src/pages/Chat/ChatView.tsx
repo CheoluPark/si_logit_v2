@@ -49,16 +49,27 @@ import { buildThread, type Message } from "./thread";
 type TransientMsg = { id: string; kind: "user" | "error"; text: string };
 
 interface PresetItem {
+  id: ChatPresetId;
   icon: typeof Search;
   label: string;
   q: string;
 }
 
+export type ChatPresetId =
+  | "today"
+  | "confluence"
+  | "jira_duration"
+  | "week_category"
+  | "trend_14d"
+  | "top_app_today"
+  | "titles_today"
+  | "peak_hour";
+
 /** 随机位候选池：第 6 张卡从这里抽（点了就有像样结果的问题）。 */
 const PRESET_POOL = [
-  { key: "mail", icon: Mail },
-  { key: "searchkw", icon: Search },
-  { key: "hours", icon: Clock },
+  { key: "mail", id: "top_app_today", icon: Mail },
+  { key: "searchkw", id: "titles_today", icon: Search },
+  { key: "hours", id: "peak_hour", icon: Clock },
 ] as const;
 
 // 轮换游标（模块级：跨挂载/跨页面往返也接着轮）。起点随机，之后顺序轮换——
@@ -76,34 +87,43 @@ function nextPoolPick(): (typeof PRESET_POOL)[number] {
  * 文案由各语言文件自带）/ 时间分配（按分类）/ 每日趋势（逐日分桶）；
  * 第 6 张为随机位，进入空态时从候选池抽一张。
  */
-function buildPresets(t: TFunction, pool: (typeof PRESET_POOL)[number]): PresetItem[] {
+export function buildPresets(
+  t: TFunction,
+  pool: (typeof PRESET_POOL)[number],
+): PresetItem[] {
   return [
     {
+      id: "today",
       icon: History,
       label: t("chat.presets.today.label"),
       q: t("chat.presets.today.q"),
     },
     {
+      id: "confluence",
       icon: Globe,
       label: t("chat.presets.browser.label"),
       q: t("chat.presets.browser.q"),
     },
     {
+      id: "jira_duration",
       icon: MonitorPlay,
       label: t("chat.presets.video.label"),
       q: t("chat.presets.video.q"),
     },
     {
+      id: "week_category",
       icon: ChartPie,
       label: t("chat.presets.category.label"),
       q: t("chat.presets.category.q"),
     },
     {
+      id: "trend_14d",
       icon: TrendingUp,
       label: t("chat.presets.trend.label"),
       q: t("chat.presets.trend.q"),
     },
     {
+      id: pool.id,
       icon: pool.icon,
       label: t(`chat.presets.${pool.key}.label`),
       q: t(`chat.presets.${pool.key}.q`),
@@ -241,7 +261,7 @@ export default function ChatView({
 
   /** 发送。`parentOverride`:编辑分支用——"" = 挂会话根,guid = 挂该消息下;
    *  缺省挂当前路径叶子(在旧分支上续聊也因此挂对位置)。 */
-  const send = async (q: string, parentOverride?: string) => {
+  const send = async (q: string, parentOverride?: string, presetId?: ChatPresetId) => {
     const trimmed = q.trim();
     if (!trimmed || busy) return;
     // 隐私门:未确认过则弹窗;取消时输入原样保留
@@ -262,6 +282,7 @@ export default function ChatView({
         i18n.language,
         askId,
         parent,
+        presetId,
       );
       if (loadSeq.current !== seq) return; // 期间切了会话,丢弃
       if (conversationId === null) {
@@ -436,10 +457,10 @@ export default function ChatView({
                 const Icon = p.icon;
                 return (
                   <button
-                    key={p.label}
+                    key={p.id}
                     type="button"
                     className={styles.presetCard}
-                    onClick={() => void send(p.q)}
+                    onClick={() => void send(p.q, undefined, p.id)}
                   >
                     <span className={styles.presetIcon}>
                       <Icon size={14} strokeWidth={2} />

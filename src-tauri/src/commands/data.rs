@@ -6,11 +6,11 @@
 use chrono::{DateTime, Local, NaiveDate};
 use tauri::State;
 
+use crate::repo::off_pc::{self, OffPcGap};
 use crate::repo::reports::{
     self, device_filter_from_option, AppDetail, AppUsage, DaySummary, HourSlot,
     TimelineBlockDetail, TimelineSession,
 };
-use crate::repo::off_pc::{self, OffPcGap};
 use crate::storage::DbPool;
 
 /// 拉某天 24 小时的使用时长分布（每小时一条），给「日」页面顶部柱状图用。
@@ -110,16 +110,9 @@ pub async fn record_off_pc_work(
     activity_type: String,
     detail: String,
 ) -> Result<i64, String> {
-    off_pc::record_off_pc(
-        &pool,
-        device_id,
-        from,
-        to,
-        activity_type,
-        detail,
-    )
-    .await
-    .map_err(Into::into)
+    off_pc::record_off_pc(&pool, device_id, from, to, activity_type, detail)
+        .await
+        .map_err(Into::into)
 }
 
 /// 拉当前设备指定本地日期内可录入的非电脑工作空档。

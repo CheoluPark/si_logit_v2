@@ -120,7 +120,7 @@ pub async fn migrate_legacy_db(data_root: &Path) -> Result<()> {
         if let Some(uid) = peek_auth_state_uid(&legacy).await {
             set_active_uid(Some(&uid))?;
             set_legacy_owner(Some(&uid))?;
-            log::info!("老版本升级：active_uid={uid}, 待 rename hindsight.sqlite");
+            log::info!("Legacy upgrade: active_uid={uid}, pending rename of hindsight.sqlite");
         }
         // 若 peek 出来是 None，老 DB 是真匿名，不动
     }
@@ -172,7 +172,7 @@ fn migrate_legacy_files(data_root: &Path, owner: &str) -> Result<bool> {
             // target 位置建了新库。此时**不能**清 legacy_owner——清了下次就再也
             // 不会尝试，老数据永久搁浅。保留 hint、大声记错误，等句柄释放后重试。
             log::error!(
-                "{what}迁移冲突：{} 与 {} 同时存在，升级前的历史数据仍在旧文件中；保留 legacy_owner 下次重试",
+                "{what} migration conflict: both {} and {} exist; pre-upgrade history is still in the old file; keeping legacy_owner for next retry",
                 legacy.display(),
                 target.display()
             );
@@ -208,7 +208,7 @@ async fn peek_auth_state_uid(path: &Path) -> Option<String> {
     // 同一次启动里 Step 2 紧接着 rename 这个文件，Windows 上句柄没放会撞
     // sharing violation，迁移失败 + 本次启动在目标路径建空库。
     if let Err(e) = pool.0.close().await {
-        log::warn!("peek_auth_state_uid: close legacy DB 失败: {e:?}");
+        log::warn!("peek_auth_state_uid: failed to close legacy DB: {e:?}");
     }
     row?.flatten().filter(|s| !s.trim().is_empty())
 }
@@ -222,7 +222,7 @@ fn rename_db_files(src: &Path, dst: &Path) -> Result<()> {
         let dst_side = sidecar(dst, suffix);
         if src_side.exists() {
             if let Err(e) = fs::rename(&src_side, &dst_side) {
-                log::warn!("迁移 {suffix} 文件失败（可忽略）: {e}");
+                log::warn!("Failed to migrate {suffix} file (ignorable): {e}");
             }
         }
     }

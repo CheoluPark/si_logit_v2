@@ -53,7 +53,6 @@
       "aiSummary": "AI Summary",
       "aiSettings": "AI Settings",
       "categories": "Categories",
-      "devices": "Cloud Sync",
       "settings": "Settings",
       "chat": "Chat",
       "timeline": "Timeline",
@@ -71,12 +70,6 @@
       "resting": "Resting",
       "stop": "Stop capture",
       "toggleAria": "Toggle capture"
-    },
-    "sync": {
-      "connected": "Connected",
-      "signedOut": "Not signed in",
-      "aria": "Manage devices & cloud sync",
-      "title": "Devices / Cloud Sync"
     }
   },
   "windowControls": {
@@ -877,7 +870,7 @@
       "models": "Models",
       "general": "General",
       "prompt": "Prompt",
-      "jiraMcp": "Jira MCP",
+      "jiraMcp": "Jira",
       "external": "Cloud API"
     },
     "engine": {
@@ -1086,7 +1079,7 @@
       "sectionTitle": "About you",
       "sectionInfo": "Included in AI summaries to help the model understand your work and context.",
       "rowLabel": "About you (optional)",
-      "placeholder": "e.g. I'm a backend developer who mostly writes Rust and TypeScript; on weekends I tinker with games."
+      "placeholder": "e.g. I am an engineer specializing in digital logic design and analog circuit design. I primarily use Vivado and OrCAD."
     },
     "prompt": {
       "sectionTitle": "Prompts",
@@ -1172,147 +1165,21 @@
       "title": "Jira MCP Connection",
       "description": "Connect to your company's Jira server to fetch Work Items for the Work Log page.",
       "urlLabel": "Server URL",
-      "urlPlaceholder": "https://jira.example.com",
+      "urlPlaceholder": "http://dxdev.satreci.com/mcpwork/mcp",
       "patLabel": "Personal Access Token (PAT)",
       "patPlaceholder": "Paste your PAT",
-      "transportLabel": "Connection Type",
-      "transportRemote": "Remote",
-      "hint": "Used only to read Work Items assigned to you. The token is stored locally in your settings."
+      "hint": "Used only to read Work Items assigned to you. The token is stored locally in your settings.",
+      "worklogPromptLabel": "Work Log template prompt",
+      "worklogPromptDescription": "Included when Work Log descriptions are generated. Set the format or template here; OCR and Work Item evidence remain the source of facts.",
+      "worklogPromptPlaceholder": "Example: [Work completed]\n- What was done\n\n[Result]\n- Confirmed outcome",
+      "characterCount": "{{count}} / 1,000 characters"
     }
   },
   "devices": {
-    "title": "Devices",
-    "meta": "Manage this device's name and the sync status of other devices.",
     "sectionSelf": "This device",
-    "sectionOthers": "Other devices",
-    "emptyOthers": "Sign in with the same account on another device to see it here.",
-    "relative": {
-      "justNow": "Just now",
-      "minutesAgo": "{{count}} min ago",
-      "hoursAgo": "{{count}} h ago",
-      "daysAgo": "{{count}} d ago"
-    },
-    "cloud": {
-      "state": {
-        "connected": "Connected to Google Drive",
-        "notSignedIn": "Not connected",
-        "notConfigured": "Not configured"
-      },
-      "desc": {
-        "signInPrompt": "Sign in with Google to sync activity data across devices via Drive. Screenshots are never uploaded.",
-        "configurePrompt": "Before first use, create an OAuth credential in Google Cloud Console (about 3 minutes)."
-      },
-      "stats": {
-        "pending": "{{count}} pending",
-        "synced": "Synced · {{when}}",
-        "waitingFirst": "Waiting for first sync",
-        "deadLetter": "· {{count}} failed"
-      },
-      "editCreds": "Edit credentials",
-      "actions": {
-        "syncNow": "Sync now",
-        "syncing": "Syncing…",
-        "syncNowTitle": "Sync now",
-        "signOut": "Sign out",
-        "signIn": "Sign in again",
-        "signOutTitle": "Sign out of this account",
-        "reauthTitle": "Credentials expired — sign in again to refresh the token",
-        "signInWithGoogle": "Sign in with Google",
-        "signingIn": "Opening browser…",
-        "configureOAuth": "Configure OAuth",
-        "restartApp": "Restart app"
-      },
-      "restartHint": "Signed in to a new account. Restart the app to switch to that account's local database.",
-      "datasets": {
-        "title": "What to sync",
-        "hint": "By default only basic data (usage stats, categories) is synced. The items below contain more sensitive information and must be enabled individually; screenshot images themselves never leave this device.",
-        "summaries": {
-          "label": "AI summary text",
-          "desc": "Generated daily / weekly report text, for reading reports across devices.",
-          "warn": "When enabled, the full text of your daily and weekly reports (including file names, page and video titles mentioned in them) will be uploaded to your Google Drive app-data area and synced to other devices signed into the same account."
-        },
-        "chat": {
-          "label": "Chat history",
-          "desc": "Chat conversations and messages, to continue across devices.",
-          "warn": "When enabled, all Chat conversations and messages — including your questions and the screen-text snippets cited in answers — will be uploaded to your Google Drive app-data area and synced to other devices."
-        },
-        "memory": {
-          "label": "Screen memory (full text)",
-          "desc": "Index of text that appeared on your screen, for cross-device search. Most sensitive.",
-          "warn": "When enabled, the full text of your screen-memory index — the verbatim content that appeared on your screen (chats, emails, code, web pages, etc.) — will be uploaded to your Google Drive app-data area and synced to other devices. This is the most sensitive tier; make sure you trust every device on this account."
-        },
-        "confirmTitle": "Upload “{{dataset}}” to the cloud?",
-        "confirmNote": "Data is stored only in your own Google Drive app-data area (invisible to other apps). You can turn this off at any time and remove it with “Clear cloud data”.",
-        "confirmAction": "I understand the risk, enable"
-      },
-      "oauthFallback": {
-        "hint": "Browser didn’t open? Copy the sign-in link and paste it into any browser.",
-        "copy": "Copy sign-in link",
-        "copied": "Copied"
-      }
-    },
-    "errors": {
-      "credExpired": "Credentials expired. Please sign in again.",
-      "transient": "Sync hit a transient error; retrying automatically…"
-    },
-    "setup": {
-      "header": "OAuth credential setup",
-      "collapse": "Collapse",
-      "step1": {
-        "title": "Enable the Google Drive API",
-        "bodyPrefix": "Click the ",
-        "cueEnable": "Enable",
-        "bodySuffix": " button.",
-        "openLink": "Open Drive API"
-      },
-      "step2": {
-        "title": "Configure the OAuth consent screen",
-        "bodyPrefix": "On first visit, click ",
-        "cueStart": "Get started",
-        "bodyMiddle": " → fill in any app name and email → set Audience to External → enter your email again under contact info → click ",
-        "cueCreate": "Create",
-        "bodySuffix": ".",
-        "openLink": "Open Audience"
-      },
-      "step3": {
-        "title": "Create the OAuth client",
-        "bodyPrefix": "Open Clients on the left → click ",
-        "cueCreateClient": "+ Create client",
-        "bodySuffix": " at the top → pick Desktop app as the application type → use any name. The Client ID and Client Secret will then be shown.",
-        "openLink": "Open Clients"
-      },
-      "step4": {
-        "title": "Paste the Client ID and Client Secret below",
-        "clientIdLabel": "Client ID",
-        "secretLabel": "Client Secret",
-        "showSecret": "Show client secret",
-        "hideSecret": "Hide client secret",
-        "show": "Show",
-        "hide": "Hide"
-      }
-    },
     "self": {
       "tag": "This device",
-      "lastActivity": "Last activity: {{when}}",
-      "todayCount": "{{count}} captures today",
-      "appearanceAria": "Change appearance",
-      "appearanceTitle": "Change color and icon",
-      "doubleClickToRename": "Double-click to rename",
-      "renameAria": "Rename",
       "renameTitle": "Rename"
-    },
-    "other": {
-      "lastSync": "Last synced: {{when}}",
-      "forgetAria": "Forget {{name}} from the cloud",
-      "forgetTitle": "Permanently remove this device from the cloud"
-    },
-    "forgetDialog": {
-      "title": "Forget \"{{name}}\" from the cloud?",
-      "intro": "This permanently deletes all data this device has in Google Drive, plus every activity record tied to it on this and any other machine. Other devices will clean up this device's data the next time they connect to the cloud.",
-      "unaffected": "Use this when the device is no longer with you (sold / lost / replaced) and you didn't clear its data from the cloud at the time — the leftover records still show up on your other devices.",
-      "confirm": "Forget device",
-      "doneToast": "\"{{name}}\" removed from the cloud ({{count}} Drive files deleted).",
-      "error": "Failed to remove device: {{message}}"
     }
   },
   "aiSummary": {
@@ -1612,12 +1479,12 @@
         "q": "What did I do today?"
       },
       "browser": {
-        "label": "Browser",
-        "q": "What did I look at in my browser today?"
+        "label": "Confluence",
+        "q": "What did I look at in Confluence today?"
       },
       "video": {
-        "label": "YouTube",
-        "q": "How long did I spend on YouTube today?"
+        "label": "Jira",
+        "q": "How long did I spend on Jira today?"
       },
       "category": {
         "label": "Time split",
@@ -1628,16 +1495,16 @@
         "q": "How long did I use my computer each day over the past two weeks?"
       },
       "mail": {
-        "label": "Email",
-        "q": "How much time did I spend on email today?"
+        "label": "Top app",
+        "q": "Which app did I use the longest today?"
       },
       "searchkw": {
-        "label": "Searches",
-        "q": "What did I search for today?"
+        "label": "Frequent titles",
+        "q": "Which window titles appeared most often today?"
       },
       "hours": {
         "label": "Peak hours",
-        "q": "At what hours of the day do I use my computer most?"
+        "q": "Over the past 7 days, when did I use my computer most?"
       }
     },
     "conversations": {

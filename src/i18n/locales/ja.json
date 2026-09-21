@@ -53,7 +53,6 @@
       "aiSummary": "AI サマリー",
       "aiSettings": "AI 設定",
       "categories": "分類",
-      "devices": "同期",
       "settings": "設定",
       "chat": "チャット"
     }
@@ -66,12 +65,6 @@
       "resting": "休憩中",
       "stop": "記録を停止",
       "toggleAria": "記録の開始 / 停止"
-    },
-    "sync": {
-      "connected": "接続済み",
-      "signedOut": "未ログイン",
-      "aria": "デバイスとクラウド同期を管理",
-      "title": "デバイス / クラウド同期"
     }
   },
   "windowControls": {
@@ -784,6 +777,7 @@
       "models": "モデル",
       "general": "一般",
       "prompt": "プロンプト",
+      "jiraMcp": "Jira",
       "external": "クラウド API"
     },
     "engine": {
@@ -1073,141 +1067,25 @@
       "ocrDailyDescription": "毎日設定時刻に未処理のスクリーンショットを自動認識",
       "addTimeAria": "時刻を追加",
       "removeTimeAria": "最後に追加した時刻を削除"
+    },
+    "jiraMcp": {
+      "title": "Jira 接続",
+      "description": "Jira サーバーに接続し、Work Log ページで Work Item を取得します。",
+      "urlLabel": "サーバー URL",
+      "urlPlaceholder": "http://dxdev.satreci.com/mcpwork/mcp",
+      "patLabel": "Personal Access Token (PAT)",
+      "patPlaceholder": "PAT を貼り付け",
+      "worklogPromptLabel": "Work Log テンプレートプロンプト",
+      "worklogPromptDescription": "Work Log の説明を生成するときに含めます。形式やテンプレートを指定できますが、事実は OCR と Work Item の根拠に基づきます。",
+      "worklogPromptPlaceholder": "例：[実施内容]\n- 行った作業\n\n[結果]\n- 確認できた結果",
+      "characterCount": "{{count}} / 1,000 文字"
     }
   },
   "devices": {
-    "title": "デバイス",
-    "meta": "このデバイスの名前と、他デバイスの同期状況を管理します。",
     "sectionSelf": "このデバイス",
-    "sectionOthers": "他のデバイス",
-    "emptyOthers": "他のデバイスで同じアカウントにログインすると、ここに表示されます。",
-    "relative": {
-      "justNow": "たった今",
-      "minutesAgo": "{{count}} 分前",
-      "hoursAgo": "{{count}} 時間前",
-      "daysAgo": "{{count}} 日前"
-    },
-    "cloud": {
-      "state": {
-        "connected": "Google Drive に接続中",
-        "notSignedIn": "未接続",
-        "notConfigured": "未設定"
-      },
-      "desc": {
-        "signInPrompt": "Google アカウントでログインすると、Drive 経由でアクティビティデータを複数デバイス間で同期します。スクリーンショットはアップロードされません。",
-        "configurePrompt": "初回利用前に、Google Cloud Console で OAuth 認証情報を作成する必要があります (約 3 分)。"
-      },
-      "stats": {
-        "pending": "保留中 {{count}} 件",
-        "synced": "同期済み · {{when}}",
-        "waitingFirst": "初回同期を待機中",
-        "deadLetter": "· 失敗 {{count}} 件"
-      },
-      "editCreds": "認証情報を編集",
-      "actions": {
-        "syncNow": "今すぐ同期",
-        "syncing": "同期中…",
-        "syncNowTitle": "今すぐ同期",
-        "signOut": "ログアウト",
-        "signIn": "再ログイン",
-        "signOutTitle": "現在のアカウントからログアウト",
-        "reauthTitle": "認証情報の有効期限が切れました。再ログインでトークンを更新してください",
-        "signInWithGoogle": "Google でログイン",
-        "signingIn": "ブラウザを開いています…",
-        "configureOAuth": "OAuth を設定",
-        "restartApp": "アプリを再起動"
-      },
-      "restartHint": "新しいアカウントでログインしました。そのアカウントのローカルデータベースに切り替えるには、アプリを再起動してください。",
-      "datasets": {
-        "title": "同期する内容",
-        "hint": "既定では使用統計や分類などの基本データのみ同期します。以下はより機微な情報を含むため個別に有効化が必要です。スクリーンショット画像そのものは決してクラウドに上がりません。",
-        "summaries": {
-          "label": "AI サマリーのテキスト",
-          "desc": "日次 / 週次レポートの生成テキスト。他のデバイスでも閲覧できます。",
-          "warn": "有効にすると、日報・週報の全文（そこに含まれるファイル名・ページや動画のタイトルを含む）が、あなたの Google Drive アプリデータ領域にアップロードされ、同じアカウントの他のデバイスに同期されます。"
-        },
-        "chat": {
-          "label": "チャット履歴",
-          "desc": "チャットの会話とメッセージ。他のデバイスで続きから質問できます。",
-          "warn": "有効にすると、チャットの全会話とメッセージ——あなたの質問と、回答に引用された画面テキストの断片を含む——が Google Drive アプリデータ領域にアップロードされ、他のデバイスに同期されます。"
-        },
-        "memory": {
-          "label": "画面メモリ全文",
-          "desc": "画面に表示されたテキストの索引。デバイス横断で検索できます。最も機微。",
-          "warn": "有効にすると、画面メモリ索引の全テキスト——画面に表示された逐語的な内容（チャット・メール・コード・ウェブページ等）——が Google Drive アプリデータ領域にアップロードされ、他のデバイスに同期されます。最も機微な項目です。このアカウントのすべてのデバイスを信頼できるか確認してください。"
-        },
-        "confirmTitle": "「{{dataset}}」をクラウドへアップロードしますか？",
-        "confirmNote": "データはあなた自身の Google Drive アプリデータ領域のみに保存されます（他のアプリからは見えません）。いつでもオフにでき、「クラウドデータを消去」で削除できます。",
-        "confirmAction": "リスクを理解して有効化"
-      },
-      "oauthFallback": {
-        "hint": "ブラウザが開きませんか？ログインリンクをコピーして、任意のブラウザに貼り付けてください。",
-        "copy": "ログインリンクをコピー",
-        "copied": "コピーしました"
-      }
-    },
-    "errors": {
-      "credExpired": "認証情報の有効期限が切れました。再度ログインしてください。",
-      "transient": "同期に一時的な問題が発生しました。自動的に再試行します…"
-    },
-    "setup": {
-      "header": "OAuth 認証情報の設定",
-      "collapse": "折りたたむ",
-      "step1": {
-        "title": "Google Drive API を有効化",
-        "bodyPrefix": "",
-        "cueEnable": "有効にする",
-        "bodySuffix": " ボタンをクリックします。",
-        "openLink": "Drive API を開く"
-      },
-      "step2": {
-        "title": "OAuth 同意画面を設定",
-        "bodyPrefix": "初回アクセス時はまず ",
-        "cueStart": "開始",
-        "bodyMiddle": " をクリック → 任意のアプリ名とメールアドレスを入力 → ユーザータイプを 外部 に設定 → 連絡先情報に再度メールアドレスを入力 → ",
-        "cueCreate": "作成",
-        "bodySuffix": " をクリックします。",
-        "openLink": "Audience を開く"
-      },
-      "step3": {
-        "title": "OAuth クライアントを作成",
-        "bodyPrefix": "左側の クライアント を開く → 上部の ",
-        "cueCreateClient": "+ クライアントを作成",
-        "bodySuffix": " をクリック → アプリケーションの種類で デスクトップアプリ を選択 → 名前は任意。クライアント ID とクライアントシークレットが表示されます。",
-        "openLink": "Clients を開く"
-      },
-      "step4": {
-        "title": "クライアント ID とクライアントシークレットを下に貼り付け",
-        "clientIdLabel": "クライアント ID",
-        "secretLabel": "クライアントシークレット",
-        "showSecret": "クライアントシークレットを表示",
-        "hideSecret": "クライアントシークレットを非表示",
-        "show": "表示",
-        "hide": "非表示"
-      }
-    },
     "self": {
       "tag": "このデバイス",
-      "lastActivity": "最終アクティビティ: {{when}}",
-      "todayCount": "今日の記録 {{count}} 件",
-      "appearanceAria": "外観を変更",
-      "appearanceTitle": "色とアイコンを変更",
-      "doubleClickToRename": "ダブルクリックで名前を変更",
-      "renameAria": "名前を変更",
       "renameTitle": "名前を変更"
-    },
-    "other": {
-      "lastSync": "最終同期: {{when}}",
-      "forgetAria": "{{name}} をクラウドから削除",
-      "forgetTitle": "このデバイスをクラウドから完全に削除"
-    },
-    "forgetDialog": {
-      "title": "「{{name}}」をクラウドから削除しますか？",
-      "intro": "このデバイスが Google Drive に保存しているすべてのデータを永久に削除し、このマシンと他のすべてのマシン上の関連アクティビティもすべて削除します。他のデバイスは次回クラウドに接続したときに、このデバイスの関連データをすべてクリーンアップします。",
-      "unaffected": "使用シーン：このデバイスはもう手元にありません（売却・紛失・買い替え）。当時クラウドのデータをクリーンアップできず、残ったデータが他のデバイスにまだ表示されているとき。",
-      "confirm": "完全に削除",
-      "doneToast": "「{{name}}」をクラウドから削除しました（Drive ファイル {{count}} 個を削除）。",
-      "error": "デバイスの削除に失敗しました：{{message}}"
     }
   },
   "aiSummary": {

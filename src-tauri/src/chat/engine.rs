@@ -9,7 +9,7 @@
 //! 引用:工具结果携带全局递增的 [n] 编号,答案里的 [n] 由前端渲染成证据卡;
 //! 答案中引用不存在编号的,后处理直接剥掉——模型伪造不出证据。
 
-use chrono::NaiveDate;
+use chrono::{Datelike, Duration, NaiveDate};
 use serde::Serialize;
 
 use super::llm::{ChatLlm, StepOut, Turn};
@@ -21,6 +21,122 @@ use crate::error::{Error, Result};
 const MAX_STEPS: u32 = 6;
 /// LLM 步骤连续失败(网络/解析)容忍次数
 const MAX_LLM_FAILURES: u32 = 2;
+
+pub(crate) fn is_known_preset(preset_id: &str) -> bool {
+    matches!(
+        preset_id,
+        "today"
+            | "confluence"
+            | "jira_duration"
+            | "week_category"
+            | "trend_14d"
+            | "top_app_today"
+            | "titles_today"
+            | "peak_hour"
+    )
+}
+
+/// Build a server-owned, validated read-only tool call for a UI preset.
+pub(crate) fn preset_tool_call(
+    preset_id: &str,
+    today: NaiveDate,
+    lang: ChatLang,
+) -> Result<Option<tools::ToolCall>> {
+    let date = |from: NaiveDate, to: NaiveDate| tools::RawParams {
+        date_from: Some(from.to_string()),
+        date_to: Some(to.to_string()),
+        ..Default::default()
+    };
+    let (name, raw) = match preset_id {
+        "today" => ("get_timeline", date(today, today)),
+        "confluence" => {
+            let mut raw = date(today, today);
+            raw.keywords = vec!["Confluence".into()];
+            ("search_text", raw)
+        }
+        "jira_duration" => {
+            let mut raw = date(today, today);
+            raw.title_keyword = Some("Jira".into());
+            raw.metric = Some(tools::StatMetric::Duration);
+            raw.group_by = Some(tools::GroupBy::None);
+            ("query_stats", raw)
+        }
+        "week_category" => {
+            let monday = today - Duration::days(today.weekday().num_days_from_monday() as i64);
+            let mut raw = date(monday, today);
+            raw.metric = Some(tools::StatMetric::Duration);
+            raw.group_by = Some(tools::GroupBy::Category);
+            ("query_stats", raw)
+        }
+        "trend_14d" => {
+            let mut raw = date(today - Duration::days(13), today);
+            raw.metric = Some(tools::StatMetric::Duration);
+            raw.bucket = Some(tools::Bucket::Day);
+            ("query_stats", raw)
+        }
+        "top_app_today" => {
+            let mut raw = date(today, today);
+            raw.metric = Some(tools::StatMetric::Duration);
+            raw.group_by = Some(tools::GroupBy::App);
+            ("query_stats", raw)
+        }
+        "titles_today" => {
+            let mut raw = date(today, today);
+            raw.metric = Some(tools::StatMetric::Duration);
+            raw.group_by = Some(tools::GroupBy::Title);
+            ("query_stats", raw)
+        }
+        "peak_hour" => {
+            let mut raw = date(today - Duration::days(6), today);
+            raw.metric = Some(tools::StatMetric::Duration);
+            raw.bucket = Some(tools::Bucket::HourOfDay);
+            ("query_stats", raw)
+        }
+        _ => return Ok(None),
+    };
+    tools::validate(name, &raw, today, lang)
+        .map(Some)
+        .map_err(Error::InvalidInputDyn)
+}
+
+/// Execute one known preset without constructing or calling an LLM.
+pub(crate) async fn answer_preset(
+    preset_id: &str,
+    ctx: &ToolCtx,
+    today: NaiveDate,
+    lang: ChatLang,
+) -> Option<Result<ChatAnswer>> {
+    let call = match preset_tool_call(preset_id, today, lang) {
+        Ok(Some(call)) => call,
+        Ok(None) => return None,
+        Err(error) => return Some(Err(error)),
+    };
+    let started = std::time::Instant::now();
+    Some(
+        tools::execute(ctx, &call, 1, lang)
+            .await
+            .map(|output| ChatAnswer {
+                text: output.for_llm,
+                citations: output.citations,
+                steps: 1,
+                degraded: false,
+                prompt_tokens: 0,
+                completion_tokens: 0,
+                reasoning_tokens: 0,
+                elapsed_ms: started.elapsed().as_millis() as u64,
+            }),
+    )
+}
+
+fn chat_trace_enabled() -> bool {
+    std::env::var("HINDSIGHT_CHAT_TRACE").map_or(false, |value| value == "1")
+}
+
+fn chat_trace(message: impl FnOnce() -> String) {
+    if chat_trace_enabled() {
+        log::info!("[chat-trace] {}", message());
+    }
+}
 
 /// 一次问答的产出。
 #[derive(Debug, Serialize)]
@@ -179,19 +295,21 @@ async fn condense_question(
     {
         Ok((raw, usage)) => match normalize_rewrite(&raw) {
             Some(q) => {
-                log::info!("多轮问题自立化: {question:?} → {q:?}");
+                log::info!("Multi-turn question self-standalization completed");
                 (Some(q), usage)
             }
             None => {
                 log::warn!(
-                    "改写器输出不可用({} 字符),退回消毒历史直答",
+                    "Rewriter output unusable ({} chars), falling back to sanitized history direct answer",
                     raw.chars().count()
                 );
                 (None, usage)
             }
         },
         Err(e) => {
-            log::warn!("改写器调用失败,退回消毒历史直答: {e}");
+            log::warn!(
+                "Rewriter call failed, falling back to sanitized history direct answer: {e}"
+            );
             (None, Default::default())
         }
     }
@@ -267,7 +385,7 @@ pub async fn answer(
             }
             Err(e) => {
                 llm_failures += 1;
-                log::warn!("chat LLM 步骤失败({llm_failures}/{MAX_LLM_FAILURES}): {e}");
+                log::warn!("chat LLM step failed({llm_failures}/{MAX_LLM_FAILURES}): {e}");
                 if llm_failures >= MAX_LLM_FAILURES {
                     return degraded_answer(citations, steps, usage_total, started, e, lang);
                 }
@@ -295,6 +413,7 @@ pub async fn answer(
                 id,
                 raw,
             } => {
+                chat_trace(|| format!("step={steps} call name={name} args={args}"));
                 // 云端用模型自己的 call id(回放时必须与 tool 消息对上);本地自造
                 let call_id = id.unwrap_or_else(|| format!("call_{steps}"));
                 let args_str = args.to_string();
@@ -308,6 +427,7 @@ pub async fn answer(
                 // 护栏:同名同参的调用只执行一次
                 let dedup_key = format!("{name}|{args_str}");
                 if !seen_calls.insert(dedup_key) {
+                    chat_trace(|| format!("step={steps} duplicate name={name}"));
                     turns.push(Turn::ToolResult {
                         id: call_id,
                         content: lang.dup_call().to_string(),
@@ -319,6 +439,9 @@ pub async fn answer(
                 let raw: tools::RawParams = match serde_json::from_value(args) {
                     Ok(r) => r,
                     Err(e) => {
+                        chat_trace(|| {
+                            format!("step={steps} validation_failed name={name} kind=malformed")
+                        });
                         turns.push(Turn::ToolResult {
                             id: call_id,
                             content: lang.args_format_err(&e),
@@ -329,6 +452,11 @@ pub async fn answer(
                 let call = match tools::validate(&name, &raw, today, lang) {
                     Ok(c) => c,
                     Err(msg) => {
+                        chat_trace(|| {
+                            format!(
+                                "step={steps} validation_failed name={name} kind=semantic: {msg}"
+                            )
+                        });
                         turns.push(Turn::ToolResult {
                             id: call_id,
                             content: lang.args_invalid(&msg),
@@ -340,6 +468,12 @@ pub async fn answer(
                 // 第③④道墙内执行
                 match tools::execute(ctx, &call, citations.len() + 1, lang).await {
                     Ok(output) => {
+                        chat_trace(|| {
+                            format!(
+                                "step={steps} tool_success name={name} citations={}",
+                                output.citations.len()
+                            )
+                        });
                         citations.extend(output.citations);
                         turns.push(Turn::ToolResult {
                             id: call_id,
@@ -347,7 +481,7 @@ pub async fn answer(
                         });
                     }
                     Err(e) => {
-                        log::warn!("chat 工具执行失败: {e}");
+                        chat_trace(|| format!("step={steps} tool_failure name={name}: {e}"));
                         turns.push(Turn::ToolResult {
                             id: call_id,
                             content: lang.tool_exec_failed().to_string(),
@@ -375,7 +509,18 @@ pub async fn answer(
                 elapsed_ms: started.elapsed().as_millis() as u64,
             })
         }
-        Ok((StepOut::Call { .. }, _)) | Err(_) => degraded_answer(
+        Ok((StepOut::Call { name, args, .. }, _)) => {
+            chat_trace(|| format!("step={} call name={name} args={args}", steps + 1));
+            degraded_answer(
+                citations,
+                steps,
+                usage_total,
+                started,
+                Error::LlmResponse("步数耗尽且模型未能作答".into()),
+                lang,
+            )
+        }
+        Err(_) => degraded_answer(
             citations,
             steps,
             usage_total,
@@ -395,7 +540,7 @@ fn degraded_answer(
     err: Error,
     lang: ChatLang,
 ) -> Result<ChatAnswer> {
-    log::warn!("chat 降级作答: {err}");
+    log::warn!("chat degraded answer: {err}");
     let text = if citations.is_empty() {
         lang.degraded_no_evidence().to_string()
     } else {
@@ -490,7 +635,9 @@ fn parse_ref_token(token: &str) -> Option<Vec<usize>> {
 
 #[cfg(test)]
 mod sanitize_tests {
+    use super::chat_trace_enabled;
     use super::sanitize_history_content;
+    use std::sync::Mutex;
 
     #[test]
     fn strips_citation_markers_keeps_other_brackets() {
@@ -567,6 +714,27 @@ mod sanitize_tests {
     }
 
     #[test]
+    fn chat_trace_requires_exact_one() {
+        static ENV_LOCK: Mutex<()> = Mutex::new(());
+        let _guard = ENV_LOCK.lock().unwrap();
+        let previous = std::env::var("HINDSIGHT_CHAT_TRACE").ok();
+
+        std::env::remove_var("HINDSIGHT_CHAT_TRACE");
+        assert!(!chat_trace_enabled());
+        std::env::set_var("HINDSIGHT_CHAT_TRACE", "0");
+        assert!(!chat_trace_enabled());
+        std::env::set_var("HINDSIGHT_CHAT_TRACE", "1");
+        assert!(chat_trace_enabled());
+        std::env::set_var("HINDSIGHT_CHAT_TRACE", "true");
+        assert!(!chat_trace_enabled());
+
+        match previous {
+            Some(value) => std::env::set_var("HINDSIGHT_CHAT_TRACE", value),
+            None => std::env::remove_var("HINDSIGHT_CHAT_TRACE"),
+        }
+    }
+
+    #[test]
     fn normalize_rewrite_strips_quotes_and_rejects_suspicious() {
         use super::normalize_rewrite;
         assert_eq!(
@@ -639,6 +807,108 @@ mod tests {
         assert_eq!(text, "上午 [2-4],其余 [1,6,9]。伪造区间 。");
         let idx: Vec<usize> = cited.iter().map(|c| c.index).collect();
         assert_eq!(idx, vec![1, 2, 3, 4, 6, 9]);
+    }
+
+    #[test]
+    fn preset_plans_use_exact_date_boundaries() {
+        let today = NaiveDate::from_ymd_opt(2026, 9, 20).unwrap(); // Sunday
+        let ko = ChatLang::Ko;
+        assert_eq!(
+            preset_tool_call("today", today, ko).unwrap(),
+            Some(tools::ToolCall::GetTimeline {
+                range: (today, today)
+            })
+        );
+        assert!(matches!(
+            preset_tool_call("confluence", today, ko).unwrap(),
+            Some(tools::ToolCall::SearchText { keywords, range })
+                if keywords == vec!["Confluence".to_string()] && range == Some((today, today))
+        ));
+
+        let expected_stats = |call: tools::ToolCall,
+                              range: (NaiveDate, NaiveDate),
+                              group_by: tools::GroupBy,
+                              bucket: tools::Bucket,
+                              title_keyword: Option<&str>| {
+            let tools::ToolCall::QueryStats {
+                range: actual_range,
+                group_by: actual_group,
+                bucket: actual_bucket,
+                metric,
+                title_keyword: actual_title,
+                ..
+            } = call
+            else {
+                panic!("expected query_stats call")
+            };
+            assert_eq!(actual_range, range);
+            assert_eq!(actual_group, group_by);
+            assert_eq!(actual_bucket, bucket);
+            assert_eq!(metric, tools::StatMetric::Duration);
+            assert_eq!(actual_title.as_deref(), title_keyword);
+        };
+
+        expected_stats(
+            preset_tool_call("jira_duration", today, ko)
+                .unwrap()
+                .unwrap(),
+            (today, today),
+            tools::GroupBy::None,
+            tools::Bucket::None,
+            Some("Jira"),
+        );
+        expected_stats(
+            preset_tool_call("week_category", today, ko)
+                .unwrap()
+                .unwrap(),
+            (NaiveDate::from_ymd_opt(2026, 9, 14).unwrap(), today),
+            tools::GroupBy::Category,
+            tools::Bucket::None,
+            None,
+        );
+        let monday = NaiveDate::from_ymd_opt(2026, 9, 14).unwrap();
+        expected_stats(
+            preset_tool_call("week_category", monday, ko)
+                .unwrap()
+                .unwrap(),
+            (monday, monday),
+            tools::GroupBy::Category,
+            tools::Bucket::None,
+            None,
+        );
+        expected_stats(
+            preset_tool_call("trend_14d", today, ko).unwrap().unwrap(),
+            (today - Duration::days(13), today),
+            tools::GroupBy::None,
+            tools::Bucket::Day,
+            None,
+        );
+        expected_stats(
+            preset_tool_call("top_app_today", today, ko)
+                .unwrap()
+                .unwrap(),
+            (today, today),
+            tools::GroupBy::App,
+            tools::Bucket::None,
+            None,
+        );
+        expected_stats(
+            preset_tool_call("titles_today", today, ko)
+                .unwrap()
+                .unwrap(),
+            (today, today),
+            tools::GroupBy::Title,
+            tools::Bucket::None,
+            None,
+        );
+        expected_stats(
+            preset_tool_call("peak_hour", today, ko).unwrap().unwrap(),
+            (today - Duration::days(6), today),
+            tools::GroupBy::None,
+            tools::Bucket::HourOfDay,
+            None,
+        );
+        assert!(preset_tool_call("unknown", today, ko).unwrap().is_none());
     }
 
     /// golden 问题集:六类典型问法(相对时间统计 / 标题过滤 / 省略式追问 /
@@ -728,6 +998,98 @@ mod tests {
                 }
                 Err(e) => panic!("golden 问题失败: {q}: {e}"),
             }
+        }
+    }
+
+    fn init_e2e_logger() {
+        let mut builder = env_logger::builder();
+        builder.filter_level(log::LevelFilter::Warn);
+        if chat_trace_enabled() {
+            builder.filter_module("hindsight_lib::chat::engine", log::LevelFilter::Info);
+        }
+        let _ = builder.is_test(true).try_init();
+    }
+
+    /// 한국어 Chat UI preset 8개를 실제 local llama-server와 실제 Hindsight DB에 실행하는
+    /// 사람이 검토할 용도의 통합 테스트입니다. 각 질문은 독립 실행(history 없음)합니다.
+    /// 별도 llama-server를 먼저 기동한 뒤 다음 명령으로 실행하세요:
+    /// `CHAT_E2E_PORT=... CHAT_E2E_MODEL=... CHAT_E2E_THINKING=off HINDSIGHT_CHAT_TRACE=1 cargo test --lib chat::engine::tests::e2e_korean_presets -- --ignored --nocapture`
+    #[tokio::test]
+    #[ignore]
+    async fn e2e_korean_presets() {
+        init_e2e_logger();
+        let thinking = crate::chat::llm::ThinkingMode::from_setting(
+            &std::env::var("CHAT_E2E_THINKING").unwrap_or_default(),
+        );
+        let port: u16 = std::env::var("CHAT_E2E_PORT")
+            .expect("set CHAT_E2E_PORT after starting llama-server")
+            .parse()
+            .expect("CHAT_E2E_PORT must be a number");
+        let llm = ChatLlm::local(
+            port,
+            std::env::var("CHAT_E2E_MODEL").expect("set CHAT_E2E_MODEL"),
+            thinking,
+        )
+        .unwrap();
+        let ctx = ToolCtx::open_readonly().await.unwrap();
+        let today = chrono::Local::now().date_naive();
+        let questions = [
+            "오늘 뭐 했어요?",
+            "오늘 Confluence에서 뭐 봤어요?",
+            "오늘 Jira에 얼마나 시간을 썼어요?",
+            "이번 주 시간을 어떤 카테고리에 썼어요?",
+            "최근 2주간 매일 컴퓨터를 얼마나 사용했어요?",
+            "오늘 이메일에 얼마나 시간을 썼어요?",
+            "오늘 뭐를 검색했어요?",
+            "하루 중 컴퓨터를 가장 많이 사용하는 시간대가 언제예요?",
+        ];
+        let mut failures = Vec::new();
+
+        for (index, question) in questions.iter().enumerate() {
+            println!("\n========== Korean preset {}: {question}", index + 1);
+            match answer(&llm, &ctx, question, &[], today, ChatLang::Ko).await {
+                Ok(result) => {
+                    let empty = result.text.trim().is_empty();
+                    println!(
+                        "[steps={} degraded={} citations={}]",
+                        result.steps,
+                        result.degraded,
+                        result.citations.len()
+                    );
+                    if result.degraded {
+                        println!("[결과 검토 필요: degraded=true]");
+                    }
+                    println!(
+                        "{}",
+                        if empty {
+                            "<empty answer>"
+                        } else {
+                            result.text.as_str()
+                        }
+                    );
+                    if empty {
+                        println!("[FAILED: empty answer]");
+                        failures.push(format!("preset {} returned an empty answer", index + 1));
+                    }
+                }
+                Err(error) => {
+                    println!("[FAILED: answer error] {error}");
+                    failures.push(format!("preset {} failed: {error}", index + 1));
+                }
+            }
+        }
+
+        if failures.is_empty() {
+            println!("\n========== Korean preset summary: no failures");
+        } else {
+            println!("\n========== Korean preset summary: failures detected");
+            for failure in &failures {
+                println!("- {failure}");
+            }
+            panic!(
+                "{} Korean preset failure(s); see output above",
+                failures.len()
+            );
         }
     }
 }
@@ -901,6 +1263,34 @@ mod loop_tests {
 
     fn today() -> NaiveDate {
         NaiveDate::from_ymd_opt(2026, 7, 10).unwrap()
+    }
+
+    #[tokio::test]
+    async fn preset_executes_once_without_an_llm() {
+        let ctx = fixture_ctx(
+            true,
+            "INSERT INTO activities VALUES(
+                 '2026-07-10T09:00:00+09:00','2026-07-10T10:00:00+09:00',3600,
+                 '2026-07-10',9,'Cursor','engine.rs — Hindsight','','',0);",
+        )
+        .await;
+
+        let result = answer_preset("today", &ctx, today(), ChatLang::Ko)
+            .await
+            .expect("known preset must not fall back")
+            .unwrap();
+        assert_eq!(result.steps, 1);
+        assert!(!result.degraded);
+        assert_eq!(
+            (
+                result.prompt_tokens,
+                result.completion_tokens,
+                result.reasoning_tokens
+            ),
+            (0, 0, 0)
+        );
+        assert!(!result.text.trim().is_empty());
+        assert_eq!(result.citations.len(), 1);
     }
 
     /// 请求里 role==tool 的全部 content——引擎经工具通道回喂给模型的报文。

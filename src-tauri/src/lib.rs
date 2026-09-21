@@ -8,6 +8,7 @@ mod device;
 mod error;
 mod icons;
 mod memory;
+mod offline;
 mod permissions;
 mod platform;
 mod repo;
@@ -32,11 +33,34 @@ pub static MINIMIZE_TO_TRAY: AtomicBool = AtomicBool::new(true);
 /// 跑 env_logger 初始化、子进程保护、Tauri builder + setup + invoke_handler，最后 block 在 Tauri 主循环。
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    let argv: Vec<String> = std::env::args().collect();
+    match offline::seed_resources_argument(&argv) {
+        Ok(Some(source_dir)) => {
+            match offline::seed_resources(&source_dir, &bootstrap::data_root()) {
+                Ok(report) => {
+                    println!(
+                        "Seeded offline assets: {} copied, {} existing files kept",
+                        report.copied, report.skipped
+                    );
+                    std::process::exit(0);
+                }
+                Err(error) => {
+                    eprintln!("Offline asset seeding failed: {error}");
+                    std::process::exit(1);
+                }
+            }
+        }
+        Ok(None) => {}
+        Err(error) => {
+            eprintln!("Invalid command line: {error}");
+            std::process::exit(2);
+        }
+    }
+
     // OCR worker 分叉:必须在**一切**之前——尤其是单实例插件(它会把重入的
     // worker 当成第二个实例直接终结)和 Job Object 初始化(worker 该是父进程
     // Job 的成员,不该自建)。run_worker 永不返回。
     {
-        let argv: Vec<String> = std::env::args().collect();
         if argv.iter().any(|a| a == "--ocr-worker") {
             let fast = argv.iter().any(|a| a == "--fast");
             let parent_pid = argv
@@ -207,6 +231,9 @@ pub fn run() {
                     .await;
                 handle.manage(resident);
                 handle.manage(commands::screen_memory::MemoryState(memdb));
+                let compaction_pool = pool.clone();
+                let compaction_mem = handle.state::<commands::screen_memory::MemoryState>().0.clone();
+                let compaction_supervisor = engine_supervisor.clone();
                 spawn_cleanup_task(pool.clone());
                 bootstrap::spawn_backfill_tasks(pool.clone());
 
@@ -225,6 +252,9 @@ pub fn run() {
                 // 自动总结调度:按 ai.auto_summary 开关自动补昨日日报/上周周报。
                 // 必须在上面全部 manage 之后 spawn——任务内按需取 managed state。
                 ai::auto_summary::spawn(handle.clone());
+                if let Some(mem) = compaction_mem {
+                    memory::compaction::spawn(compaction_pool, mem, compaction_supervisor);
+                }
                 // 定时补识别:settings.memory_ocr_daily_at 设了时刻才实际工作
                 memory::scheduled::spawn(handle.clone());
             });
@@ -259,7 +289,6 @@ pub fn run() {
             commands::categories::reorder_categories,
             commands::categories::assign_app_to_category,
             commands::categories::unassign_app,
-            commands::categories::list_unclassified_apps,
             // --- super_categories: 大类容器（v28，本地 only） ---
             commands::super_categories::list_super_categories,
             commands::super_categories::create_super_category,
@@ -300,12 +329,10 @@ pub fn run() {
             commands::devices::update_self_device,
             // --- ai: endpoint 测试 ---
             commands::ai_endpoint::test_ai_endpoint,
-            commands::ai_endpoint::test_ai_chat,
             // --- ai: 引擎运行时 ---
             commands::ai_engine::get_engine_status,
             commands::ai_engine::start_engine,
             commands::ai_engine::stop_engine,
-            commands::ai_engine::set_active_model,
             commands::ai_engine::set_step_model,
             commands::ai_engine::get_engine_logs,
             // --- ai: binary ---
@@ -351,9 +378,7 @@ pub fn run() {
             commands::ai_summary::get_week_summary,
             commands::ai_summary::clear_week_summary,
             commands::ai_summary::precheck_week_summary,
-            // --- worklog: Work Log MCP placeholder ---
             commands::worklog::fetch_work_items,
-            commands::worklog::register_work_log,
             // --- worklog: 스크린샷 기반 작업 묘사 생성 ---
             commands::worklog::generate_work_description,
         ])

@@ -35,7 +35,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::process::{Child, Command};
 use tokio::sync::Mutex;
@@ -129,6 +129,9 @@ pub struct EngineSupervisor {
     /// 之前用 [`Self::loaded_main`] 校验装的是不是自己需要的模型——否则周报可能
     /// 被 2 分钟前调试跑留下的 vision 模型+小上下文生成（截断/低质/报错）。
     loaded_main: std::sync::Mutex<Option<PathBuf>>,
+    /// 与 `loaded_main` 配套的 vision projection 路径。
+    loaded_mmproj: std::sync::Mutex<Option<PathBuf>>,
+    lease: std::sync::Mutex<Option<EngineLeaseIdentity>>,
     /// 当前（或最近一次启动时）的 EngineStartOverrides。与 [`Self::loaded_main`] 配套：
     /// 复用 Running 引擎前还要校验 ctx / slots / batch 是否匹配——模型相同但用默认
     /// 8K ctx 起的引擎（如手动 start_engine）拿去跑配了 64K ctx 的 step 会请求超限。
@@ -148,6 +151,7 @@ struct Inner {
     /// 不属于本次调用，不能 kill 或改状态，否则会误杀新启动的健康引擎 / 把 Stopped
     /// 冲成 Error。
     generation: u64,
+    lease_pending: bool,
 }
 
 /// in-flight 推理请求计数器 + 最后一次活跃时间戳。
@@ -156,6 +160,73 @@ struct InflightState {
     count: usize,
     /// 最后一次 acquire / release 的时刻。watcher 用 `elapsed()` 判断是否 idle 超阈。
     last_used_at: Instant,
+}
+
+struct StartOutcome {
+    port: u16,
+    lease_identity: Option<EngineLeaseIdentity>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct EngineLeaseIdentity {
+    port: u16,
+    generation: u64,
+    actual_ctx_size: u32,
+    main: Option<PathBuf>,
+    mmproj: Option<PathBuf>,
+    overrides: EngineStartOverrides,
+}
+
+/// Keeps the selected local engine identity stable across tokenization,
+/// completion, and the compaction commit decision.
+pub struct EngineLease {
+    supervisor: Arc<EngineSupervisor>,
+    identity: EngineLeaseIdentity,
+}
+
+impl EngineLease {
+    pub fn port(&self) -> u16 {
+        self.identity.port
+    }
+
+    pub fn actual_ctx_size(&self) -> u32 {
+        self.identity.actual_ctx_size
+    }
+
+    /// Validate that the leased process/model generation is still current.
+    pub async fn validate(&self) -> Result<()> {
+        let inner = self.supervisor.inner.lock().await;
+        let current = EngineLeaseIdentity {
+            port: inner.state.port.ok_or(Error::EngineBusy)?,
+            generation: inner.generation,
+            actual_ctx_size: self.identity.actual_ctx_size,
+            main: self.supervisor.loaded_main(),
+            mmproj: self.supervisor.loaded_mmproj(),
+            overrides: self.supervisor.loaded_overrides(),
+        };
+        let active = self
+            .supervisor
+            .lease
+            .lock()
+            .expect("engine lease lock poisoned");
+        if inner.state.state != EngineState::Running
+            || active.as_ref() != Some(&self.identity)
+            || current != self.identity
+        {
+            return Err(Error::EngineBusy);
+        }
+        Ok(())
+    }
+}
+
+impl Drop for EngineLease {
+    fn drop(&mut self) {
+        if let Ok(mut active) = self.supervisor.lease.lock() {
+            if active.as_ref() == Some(&self.identity) {
+                *active = None;
+            }
+        }
+    }
 }
 
 impl Default for InflightState {
@@ -206,6 +277,8 @@ impl EngineSupervisor {
             logs: Arc::new(Mutex::new(VecDeque::with_capacity(LOGS_RING_SIZE))),
             inflight_state: std::sync::Mutex::new(InflightState::default()),
             loaded_main: std::sync::Mutex::new(None),
+            loaded_mmproj: std::sync::Mutex::new(None),
+            lease: std::sync::Mutex::new(None),
             loaded_overrides: std::sync::Mutex::new(EngineStartOverrides::default()),
         }
     }
@@ -222,6 +295,10 @@ impl EngineSupervisor {
     /// 当前（或最近一次启动加载）的 main GGUF 路径；从未启动过为 None。
     pub fn loaded_main(&self) -> Option<PathBuf> {
         self.loaded_main.lock().ok().and_then(|g| g.clone())
+    }
+
+    fn loaded_mmproj(&self) -> Option<PathBuf> {
+        self.loaded_mmproj.lock().ok().and_then(|g| g.clone())
     }
 
     /// 当前（或最近一次启动时）的 EngineStartOverrides。复用 Running 引擎前
@@ -246,6 +323,30 @@ impl EngineSupervisor {
         InferenceGuard {
             sup: Arc::clone(self),
         }
+    }
+
+    /// Atomically reuse the requested running engine or start it if stopped,
+    /// then claim its identity until the returned lease is dropped.
+    pub async fn acquire_matching_engine_lease(
+        self: &Arc<Self>,
+        model_path: Option<PathBuf>,
+        mmproj_path: Option<PathBuf>,
+        overrides: EngineStartOverrides,
+    ) -> Result<EngineLease> {
+        let outcome = self
+            .start_with_overrides_checked(
+                model_path.clone(),
+                mmproj_path.clone(),
+                overrides.clone(),
+                true,
+                true,
+            )
+            .await?;
+        let identity = outcome.lease_identity.ok_or(Error::EngineBusy)?;
+        Ok(EngineLease {
+            supervisor: Arc::clone(self),
+            identity,
+        })
     }
 
     /// 启动 idle watcher：每 [`IDLE_TICK`] 检查一次，引擎 Running + in-flight==0
@@ -289,6 +390,17 @@ impl EngineSupervisor {
         let child = {
             let mut inner = self.inner.lock().await;
             if inner.state.state != EngineState::Running {
+                return false;
+            }
+            if self
+                .lease
+                .lock()
+                .map(|lease| lease.is_some())
+                .unwrap_or(true)
+            {
+                return false;
+            }
+            if inner.lease_pending {
                 return false;
             }
             // inflight 锁的临界区极短（usize 比较 + Instant.elapsed），不会因为
@@ -368,30 +480,118 @@ impl EngineSupervisor {
         mmproj_path: Option<PathBuf>,
         overrides: EngineStartOverrides,
     ) -> Result<u16> {
+        Ok(self
+            .start_with_overrides_checked(model_path, mmproj_path, overrides, false, false)
+            .await?
+            .port)
+    }
+
+    async fn start_with_overrides_checked(
+        &self,
+        model_path: Option<PathBuf>,
+        mmproj_path: Option<PathBuf>,
+        overrides: EngineStartOverrides,
+        require_matching_running: bool,
+        claim_lease: bool,
+    ) -> Result<StartOutcome> {
         // 记录本次要加载的 main 路径（Running 早退分支不覆盖——那时装的还是旧的）。
         // 供 loaded_main() 查询："复用已在跑的引擎"前调用方能校验装的是不是自己要的模型。
         let requested_main = model_path.clone();
+        let requested_mmproj = mmproj_path.clone();
         // 第一段：占锁、预检、置 starting、spawn、释放锁
         let (port, my_gen) = {
             let mut inner = self.inner.lock().await;
             match inner.state.state {
                 EngineState::Running => {
                     if let Some(p) = inner.state.port {
-                        return Ok(p);
+                        let matches = *self.loaded_main.lock().expect("loaded_main 锁不该毒化")
+                            == requested_main
+                            && *self.loaded_mmproj.lock().expect("loaded_mmproj 锁不该毒化")
+                                == requested_mmproj
+                            && *self
+                                .loaded_overrides
+                                .lock()
+                                .expect("loaded_overrides 锁不该毒化")
+                                == overrides;
+                        let leased = self
+                            .lease
+                            .lock()
+                            .map(|lease| lease.is_some())
+                            .unwrap_or(true);
+                        if (require_matching_running || leased) && !matches {
+                            return Err(Error::EngineBusy);
+                        }
+                        if claim_lease {
+                            if !matches || leased {
+                                return Err(Error::EngineBusy);
+                            }
+                            let actual_ctx_size = query_actual_ctx_size(p).await?;
+                            let identity = EngineLeaseIdentity {
+                                port: p,
+                                generation: inner.generation,
+                                actual_ctx_size,
+                                main: requested_main,
+                                mmproj: requested_mmproj,
+                                overrides,
+                            };
+                            *self.lease.lock().expect("engine lease lock poisoned") =
+                                Some(identity.clone());
+                            return Ok(StartOutcome {
+                                port: p,
+                                lease_identity: Some(identity),
+                            });
+                        }
+                        if require_matching_running {
+                            self.touch();
+                        }
+                        return Ok(StartOutcome {
+                            port: p,
+                            lease_identity: None,
+                        });
+                    }
+                    if require_matching_running {
+                        return Err(Error::EngineBusy);
                     }
                 }
                 EngineState::Starting => {
                     return Err(Error::EngineBusy);
                 }
-                EngineState::Stopped | EngineState::Error => {}
+                EngineState::Stopped => {}
+                EngineState::Error => {
+                    if require_matching_running {
+                        return Err(Error::EngineBusy);
+                    }
+                }
             }
-            *self.loaded_main.lock().expect("loaded_main 锁不该毒化") = requested_main;
+            if self
+                .lease
+                .lock()
+                .map(|lease| lease.is_some())
+                .unwrap_or(true)
+            {
+                return Err(Error::EngineBusy);
+            }
+            if inner.lease_pending {
+                return Err(Error::EngineBusy);
+            }
+            if claim_lease {
+                inner.lease_pending = true;
+            }
+            *self.loaded_main.lock().expect("loaded_main 锁不该毒化") = requested_main.clone();
+            *self.loaded_mmproj.lock().expect("loaded_mmproj 锁不该毒化") =
+                requested_mmproj.clone();
             *self
                 .loaded_overrides
                 .lock()
                 .expect("loaded_overrides 锁不该毒化") = overrides.clone();
 
-            let bin_path = binary::binary_path()?;
+            let bin_path = match binary::binary_path() {
+                Ok(path) => path,
+                Err(error) => {
+                    inner.lease_pending = false;
+                    return Err(error);
+                }
+            };
             if !bin_path.exists() {
                 let msg = "engine.binaryMissing".to_string();
                 inner.state = EngineRuntimeStatus {
@@ -400,10 +600,17 @@ impl EngineSupervisor {
                     error: Some(msg.clone()),
                     ..Default::default()
                 };
+                inner.lease_pending = false;
                 return Err(Error::EngineStart(msg));
             }
 
-            let port = pick_free_port()?;
+            let port = match pick_free_port() {
+                Ok(port) => port,
+                Err(error) => {
+                    inner.lease_pending = false;
+                    return Err(error);
+                }
+            };
             // 在 build_command 消费 path 之前抽出文件名给 log 用——验证 step 间确实加载不同模型
             let main_name = model_path
                 .as_ref()
@@ -443,6 +650,7 @@ impl EngineSupervisor {
                         error: Some(msg.clone()),
                         ..Default::default()
                     };
+                    inner.lease_pending = false;
                     return Err(Error::Io(e));
                 }
             };
@@ -502,6 +710,7 @@ impl EngineSupervisor {
         if inner.generation != my_gen {
             // 等待期间引擎被 stop() / 新的 start 接管：当前 child/state 属于接管方，
             // 本次调用不能动它们（否则误杀新引擎 / 冲掉新状态），只报自己失败
+            inner.lease_pending = false;
             return Err(Error::EngineStart(
                 "启动等待期间引擎被 stop/新的 start 接管".to_string(),
             ));
@@ -513,12 +722,39 @@ impl EngineSupervisor {
                 error: None,
                 ..Default::default()
             };
+            let actual_ctx_size = if claim_lease {
+                match query_actual_ctx_size(port).await {
+                    Ok(size) => Some(size),
+                    Err(error) => {
+                        inner.lease_pending = false;
+                        return Err(error);
+                    }
+                }
+            } else {
+                None
+            };
             // 新一轮启动：把 inflight 计数清零 + last_used_at 推到现在。
             // 不重置的话上一轮残留的旧 last_used 会让新启动立刻被 watcher 当成 idle 干掉。
             if let Ok(mut s) = self.inflight_state.lock() {
                 *s = InflightState::default();
             }
-            Ok(port)
+            let lease_identity = actual_ctx_size.map(|actual_ctx_size| {
+                let identity = EngineLeaseIdentity {
+                    port,
+                    generation: inner.generation,
+                    actual_ctx_size,
+                    main: requested_main,
+                    mmproj: requested_mmproj,
+                    overrides,
+                };
+                *self.lease.lock().expect("engine lease lock poisoned") = Some(identity.clone());
+                identity
+            });
+            inner.lease_pending = false;
+            Ok(StartOutcome {
+                port,
+                lease_identity,
+            })
         } else {
             // /health 没等到 200——可能子进程已退出（缺模型 / 配置错），
             // 也可能仍活着但 hang 住。两种情况都从 logs ring 拿末尾几行作错误描述。
@@ -534,6 +770,7 @@ impl EngineSupervisor {
                 ..Default::default()
             };
             inner.child = None;
+            inner.lease_pending = false;
             Err(Error::EngineStart(err_msg))
         }
     }
@@ -561,6 +798,14 @@ impl EngineSupervisor {
     pub async fn stop(&self) -> Result<()> {
         let child = {
             let mut inner = self.inner.lock().await;
+            if self
+                .lease
+                .lock()
+                .map(|lease| lease.is_some())
+                .unwrap_or(true)
+            {
+                return Err(Error::EngineBusy);
+            }
             inner.state = EngineRuntimeStatus::default();
             // 推进世代：让还在等 health 的旧 start 立刻退出，且不把 Stopped 冲成 Error
             inner.generation = inner.generation.wrapping_add(1);
@@ -577,6 +822,41 @@ impl EngineSupervisor {
 // ─────────────────────────────────────────────────────────
 //  内部辅助
 // ─────────────────────────────────────────────────────────
+
+#[derive(Deserialize)]
+struct SlotContext {
+    n_ctx: Option<u64>,
+}
+
+pub(crate) fn parse_slots_context(body: &str) -> Result<u32> {
+    let slots: Vec<SlotContext> = serde_json::from_str(body)
+        .map_err(|e| Error::Other(format!("llama /slots 响应无效：{e}")))?;
+    let first = slots
+        .first()
+        .and_then(|slot| slot.n_ctx)
+        .filter(|size| *size > 0)
+        .ok_or_else(|| Error::Other("llama /slots 未提供正数 n_ctx".into()))?;
+    if slots.iter().any(|slot| slot.n_ctx != Some(first)) {
+        return Err(Error::Other(
+            "llama /slots 的 n_ctx 不一致或不是正数".into(),
+        ));
+    }
+    u32::try_from(first).map_err(|_| Error::Other("llama /slots 的 n_ctx 超出范围".into()))
+}
+
+async fn query_actual_ctx_size(port: u16) -> Result<u32> {
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(5))
+        .build()?;
+    let body = client
+        .get(format!("http://127.0.0.1:{port}/slots"))
+        .send()
+        .await?
+        .error_for_status()?
+        .text()
+        .await?;
+    parse_slots_context(&body)
+}
 
 /// 让 OS 挑一个未占用的端口然后立刻释放——子进程 spawn 用这个端口。
 ///
@@ -815,4 +1095,142 @@ fn spawn_drain_task<R>(
             }
         }
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+    async fn slots_server(body: &'static str) -> (u16, tokio::task::JoinHandle<()>) {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let task = tokio::spawn(async move {
+            let Ok((mut stream, _)) = listener.accept().await else {
+                return;
+            };
+            let mut request = [0_u8; 1024];
+            let _ = stream.read(&mut request).await;
+            let response = format!(
+                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                body.len(),
+                body
+            );
+            let _ = stream.write_all(response.as_bytes()).await;
+        });
+        (port, task)
+    }
+
+    #[test]
+    fn parses_consistent_positive_slot_context() {
+        assert_eq!(
+            parse_slots_context(r#"[{"n_ctx":4096},{"n_ctx":4096}]"#).unwrap(),
+            4096
+        );
+        assert!(parse_slots_context("[]").is_err());
+        assert!(parse_slots_context(r#"[{"n_ctx":0}]"#).is_err());
+        assert!(parse_slots_context(r#"[{"n_ctx":4096},{"n_ctx":8192}]"#).is_err());
+        assert!(parse_slots_context(r#"[{"n_ctx":"4096"}]"#).is_err());
+    }
+
+    #[tokio::test]
+    async fn strict_reuse_rejects_foreground_model_without_starting() {
+        let supervisor = EngineSupervisor::new();
+        {
+            let mut inner = supervisor.inner.lock().await;
+            inner.state = EngineRuntimeStatus {
+                state: EngineState::Running,
+                port: Some(43123),
+                ..Default::default()
+            };
+            *supervisor.loaded_main.lock().unwrap() = Some(PathBuf::from("foreground.gguf"));
+            *supervisor.loaded_overrides.lock().unwrap() = EngineStartOverrides::default();
+        }
+
+        let reused = supervisor
+            .start_with_overrides_checked(
+                Some(PathBuf::from("foreground.gguf")),
+                None,
+                EngineStartOverrides::default(),
+                true,
+                false,
+            )
+            .await
+            .unwrap()
+            .port;
+        assert_eq!(reused, 43123);
+
+        let result = supervisor
+            .start_with_overrides_checked(
+                Some(PathBuf::from("background.gguf")),
+                None,
+                EngineStartOverrides::default(),
+                true,
+                false,
+            )
+            .await;
+        assert!(matches!(result, Err(Error::EngineBusy)));
+        assert_eq!(supervisor.status().await.port, Some(43123));
+    }
+
+    #[tokio::test]
+    async fn engine_lease_blocks_stop_and_detects_generation_invalidation() {
+        let supervisor = Arc::new(EngineSupervisor::new());
+        let (port, server) = slots_server(r#"[{"n_ctx":4096}]"#).await;
+        {
+            let mut inner = supervisor.inner.lock().await;
+            inner.state = EngineRuntimeStatus {
+                state: EngineState::Running,
+                port: Some(port),
+                ..Default::default()
+            };
+            inner.generation = 7;
+            *supervisor.loaded_main.lock().unwrap() = Some(PathBuf::from("summary.gguf"));
+            *supervisor.loaded_mmproj.lock().unwrap() = None;
+            *supervisor.loaded_overrides.lock().unwrap() = EngineStartOverrides::default();
+        }
+
+        let lease = supervisor
+            .acquire_matching_engine_lease(
+                Some(PathBuf::from("summary.gguf")),
+                None,
+                EngineStartOverrides::default(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(lease.actual_ctx_size(), 4096);
+        assert!(matches!(supervisor.stop().await, Err(Error::EngineBusy)));
+        lease.validate().await.unwrap();
+
+        supervisor.inner.lock().await.generation += 1;
+        assert!(matches!(lease.validate().await, Err(Error::EngineBusy)));
+        drop(lease);
+        server.abort();
+    }
+
+    #[tokio::test]
+    async fn unavailable_slots_do_not_create_a_lease() {
+        let supervisor = Arc::new(EngineSupervisor::new());
+        let (port, server) = slots_server("[]").await;
+        {
+            let mut inner = supervisor.inner.lock().await;
+            inner.state = EngineRuntimeStatus {
+                state: EngineState::Running,
+                port: Some(port),
+                ..Default::default()
+            };
+            *supervisor.loaded_main.lock().unwrap() = Some(PathBuf::from("summary.gguf"));
+            *supervisor.loaded_overrides.lock().unwrap() = EngineStartOverrides::default();
+        }
+        assert!(supervisor
+            .acquire_matching_engine_lease(
+                Some(PathBuf::from("summary.gguf")),
+                None,
+                EngineStartOverrides::default(),
+            )
+            .await
+            .is_err());
+        assert!(supervisor.stop().await.is_ok());
+        server.abort();
+    }
 }

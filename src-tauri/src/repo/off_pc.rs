@@ -3,11 +3,9 @@
 use chrono::{DateTime, Datelike, Duration, Local, NaiveDate, TimeZone, Timelike, Utc};
 use rusqlite::{OptionalExtension, Transaction};
 use serde::Serialize;
-use serde_json::json;
 
 use crate::device;
 use crate::error::{Error, Result};
-use crate::repo::outbox::{enqueue, OutboxEntity, OutboxOp};
 use crate::storage::{utc_now_rfc3339, DbPool, SqliteResultExt};
 
 const OFF_PC_CATEGORY_NAME: &str = "PC 외 업무";
@@ -40,7 +38,9 @@ pub async fn recordable_off_pc_gaps(
 ) -> Result<Vec<OffPcGap>> {
     let self_id = device::self_id()?.to_string();
     if device_id != self_id {
-        return Err(Error::InvalidInput("off-PC gaps must target the current device"));
+        return Err(Error::InvalidInput(
+            "off-PC gaps must target the current device",
+        ));
     }
 
     let today = Local::now().date_naive();
@@ -195,7 +195,9 @@ pub async fn record_off_pc(
 ) -> Result<i64> {
     let self_id = device::self_id()?.to_string();
     if device_id != self_id {
-        return Err(Error::InvalidInput("off-PC activity must target the current device"));
+        return Err(Error::InvalidInput(
+            "off-PC activity must target the current device",
+        ));
     }
 
     let label = match activity_type.as_str() {
@@ -206,7 +208,9 @@ pub async fn record_off_pc(
     };
     let detail = detail.trim().to_string();
     if detail.is_empty() {
-        return Err(Error::InvalidInput("off-PC activity detail must not be empty"));
+        return Err(Error::InvalidInput(
+            "off-PC activity detail must not be empty",
+        ));
     }
 
     let from_dt = DateTime::parse_from_rfc3339(&from)
@@ -221,7 +225,9 @@ pub async fn record_off_pc(
         return Err(Error::InvalidInput("off-PC interval must be non-empty"));
     }
     if to_dt > Utc::now() {
-        return Err(Error::InvalidInput("off-PC interval must not be in the future"));
+        return Err(Error::InvalidInput(
+            "off-PC interval must not be in the future",
+        ));
     }
 
     let started_at = from_dt.to_rfc3339();
@@ -264,14 +270,7 @@ pub async fn record_off_pc(
 
             ensure_off_pc_supercategory(&tx, &updated_at).db()?;
             let category_id = ensure_off_pc_category(&tx, &updated_at).db()?;
-            ensure_manual_group(
-                &tx,
-                &process_name,
-                &label,
-                &category_id,
-                &updated_at,
-            )
-            .db()?;
+            ensure_manual_group(&tx, &process_name, &label, &category_id, &updated_at).db()?;
 
             tx.execute(
                 "INSERT INTO activities(
@@ -293,28 +292,6 @@ pub async fn record_off_pc(
             )
             .db()?;
             let activity_id = tx.last_insert_rowid();
-            let activity_payload = json!({
-                "id": activity_id,
-                "startedAt": started_at,
-                "endedAt": ended_at,
-                "durationSecs": duration_secs,
-                "localDate": local_date,
-                "localHour": local_hour,
-                "processName": process_name,
-                "windowTitle": detail,
-                "categoryId": "other",
-                "updatedAt": updated_at,
-            })
-            .to_string();
-            enqueue(
-                &tx,
-                OutboxOp::Upsert,
-                OutboxEntity::Activity,
-                &activity_id.to_string(),
-                &activity_payload,
-            )
-            .db()?;
-
             tx.commit().db()?;
             Ok(Ok(activity_id))
         })
@@ -322,10 +299,7 @@ pub async fn record_off_pc(
     result
 }
 
-fn ensure_off_pc_supercategory(
-    tx: &Transaction<'_>,
-    updated_at: &str,
-) -> rusqlite::Result<()> {
+fn ensure_off_pc_supercategory(tx: &Transaction<'_>, updated_at: &str) -> rusqlite::Result<()> {
     let existing: Option<(String, String, String, Option<String>)> = tx
         .query_row(
             "SELECT name, color, icon, deleted_at FROM super_categories WHERE id = ?",
@@ -379,10 +353,7 @@ fn ensure_off_pc_supercategory(
     Ok(())
 }
 
-fn ensure_off_pc_category(
-    tx: &Transaction<'_>,
-    updated_at: &str,
-) -> rusqlite::Result<String> {
+fn ensure_off_pc_category(tx: &Transaction<'_>, updated_at: &str) -> rusqlite::Result<String> {
     if let Some(id) = tx
         .query_row(
             "SELECT id FROM categories
@@ -416,23 +387,6 @@ fn ensure_off_pc_category(
             updated_at,
         ],
     )?;
-    enqueue(
-        tx,
-        OutboxOp::Upsert,
-        OutboxEntity::Category,
-        &id,
-        &json!({
-            "id": id,
-            "name": OFF_PC_CATEGORY_NAME,
-            "color": OFF_PC_CATEGORY_COLOR,
-            "icon": OFF_PC_CATEGORY_ICON,
-            "builtin": false,
-            "sortOrder": sort_order,
-            "updatedAt": updated_at,
-            "deletedAt": null,
-        })
-        .to_string(),
-    )?;
     Ok(id)
 }
 
@@ -450,7 +404,7 @@ fn ensure_manual_group(
             |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
         )
         .optional()?;
-    let group_changed = match group {
+    let _group_changed = match group {
         None => {
             tx.execute(
                 "INSERT INTO app_groups(id, display_name, category_id, updated_at, deleted_at)
@@ -474,15 +428,6 @@ fn ensure_manual_group(
         }
         Some(_) => false,
     };
-    if group_changed {
-        enqueue(
-            tx,
-            OutboxOp::Upsert,
-            OutboxEntity::AppGroup,
-            process_name,
-            &json!({ "groupId": process_name }).to_string(),
-        )?;
-    }
 
     let member: Option<(String, Option<String>)> = tx
         .query_row(
@@ -491,7 +436,7 @@ fn ensure_manual_group(
             |r| Ok((r.get(0)?, r.get(1)?)),
         )
         .optional()?;
-    let member_changed = match member {
+    let _member_changed = match member {
         None => {
             tx.execute(
                 "INSERT INTO app_group_members(process_name, group_id, updated_at, deleted_at)
@@ -513,24 +458,15 @@ fn ensure_manual_group(
         }
         Some(_) => false,
     };
-    if member_changed {
-        enqueue(
-            tx,
-            OutboxOp::Upsert,
-            OutboxEntity::AppGroupMember,
-            process_name,
-            &json!({ "processName": process_name }).to_string(),
-        )?;
-    }
     Ok(())
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use chrono::{Datelike, TimeZone};
     use crate::repo::test_util::{fresh_test_pool, TEST_SELF_ID};
     use crate::storage::SqliteResultExt;
+    use chrono::{Datelike, TimeZone};
 
     fn interval_at(start_hour: u32) -> (String, String) {
         let day = Local::now().date_naive() - Duration::days(2);
@@ -599,11 +535,7 @@ mod tests {
             .unwrap();
     }
 
-    fn gap_overlaps(
-        gap: &OffPcGap,
-        start: DateTime<Utc>,
-        end: DateTime<Utc>,
-    ) -> bool {
+    fn gap_overlaps(gap: &OffPcGap, start: DateTime<Utc>, end: DateTime<Utc>) -> bool {
         let gap_start = DateTime::parse_from_rfc3339(&gap.from)
             .unwrap()
             .with_timezone(&Utc);
@@ -625,11 +557,7 @@ mod tests {
             .await
             .unwrap();
         assert!(!gaps.iter().any(|gap| {
-            gap_overlaps(
-                gap,
-                started.with_timezone(&Utc),
-                ended.with_timezone(&Utc),
-            )
+            gap_overlaps(gap, started.with_timezone(&Utc), ended.with_timezone(&Utc))
         }));
     }
 
@@ -671,13 +599,10 @@ mod tests {
             false,
         )
         .await;
-        let boundary_gaps = recordable_off_pc_gaps(
-            &boundary_pool,
-            now.date_naive(),
-            TEST_SELF_ID.into(),
-        )
-        .await
-        .unwrap();
+        let boundary_gaps =
+            recordable_off_pc_gaps(&boundary_pool, now.date_naive(), TEST_SELF_ID.into())
+                .await
+                .unwrap();
         assert!(!boundary_gaps.iter().any(|gap| {
             gap_overlaps(
                 gap,
@@ -691,11 +616,9 @@ mod tests {
     async fn gaps_reject_remote_and_return_empty_for_future_dates() {
         let pool = fresh_test_pool().await;
         let today = Local::now().date_naive();
-        assert!(
-            recordable_off_pc_gaps(&pool, today, "remote-device".into())
-                .await
-                .is_err()
-        );
+        assert!(recordable_off_pc_gaps(&pool, today, "remote-device".into())
+            .await
+            .is_err());
         assert!(
             recordable_off_pc_gaps(&pool, today + Duration::days(1), TEST_SELF_ID.into())
                 .await
@@ -738,7 +661,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn records_exact_duration_and_sync_payloads() {
+    async fn records_exact_duration() {
         let pool = fresh_test_pool().await;
         let (from, to) = interval();
         let id = record_off_pc(
@@ -759,31 +682,6 @@ mod tests {
         .await;
         assert_eq!(duration, 3600);
         assert_eq!(scalar(&pool, "SELECT COUNT(*) FROM activities").await, 1);
-        let payload: String = pool
-            .0
-            .call(move |conn| {
-                conn.query_row(
-                    "SELECT payload FROM sync_outbox WHERE entity = 'activity' AND entity_pk = ?",
-                    rusqlite::params![id.to_string()],
-                    |r| r.get(0),
-                )
-                .db()
-            })
-            .await
-            .unwrap();
-        let payload: serde_json::Value = serde_json::from_str(&payload).unwrap();
-        assert_eq!(payload["localDate"].as_str().unwrap().len(), 10);
-        assert!(payload["processName"].as_str().unwrap().contains(MEETING));
-        for entity in ["category", "app_group", "app_group_member", "activity"] {
-            assert_eq!(
-                scalar(
-                    &pool,
-                    &format!("SELECT COUNT(*) FROM sync_outbox WHERE entity = '{entity}'"),
-                )
-                .await,
-                1
-            );
-        }
     }
 
     #[tokio::test]
@@ -809,18 +707,16 @@ mod tests {
             })
             .await
             .unwrap();
-        assert!(
-            record_off_pc(
-                &pool,
-                TEST_SELF_ID.into(),
-                from.clone(),
-                to.clone(),
-                MEETING.into(),
-                "overlap".into(),
-            )
-            .await
-            .is_err()
-        );
+        assert!(record_off_pc(
+            &pool,
+            TEST_SELF_ID.into(),
+            from.clone(),
+            to.clone(),
+            MEETING.into(),
+            "overlap".into(),
+        )
+        .await
+        .is_err());
         pool.0
             .call(|conn| {
                 conn.execute("UPDATE activities SET excluded = 1", [])
@@ -844,30 +740,26 @@ mod tests {
         );
         let future_from = Utc::now() + chrono::Duration::minutes(1);
         let future_to = future_from + chrono::Duration::minutes(5);
-        assert!(
-            record_off_pc(
-                &pool,
-                TEST_SELF_ID.into(),
-                future_from.to_rfc3339(),
-                future_to.to_rfc3339(),
-                MEETING.into(),
-                "future".into(),
-            )
-            .await
-            .is_err()
-        );
-        assert!(
-            record_off_pc(
-                &pool,
-                "other-device".into(),
-                from,
-                to,
-                MEETING.into(),
-                "wrong device".into(),
-            )
-            .await
-            .is_err()
-        );
+        assert!(record_off_pc(
+            &pool,
+            TEST_SELF_ID.into(),
+            future_from.to_rfc3339(),
+            future_to.to_rfc3339(),
+            MEETING.into(),
+            "future".into(),
+        )
+        .await
+        .is_err());
+        assert!(record_off_pc(
+            &pool,
+            "other-device".into(),
+            from,
+            to,
+            MEETING.into(),
+            "wrong device".into(),
+        )
+        .await
+        .is_err());
     }
 
     #[tokio::test]
@@ -976,18 +868,16 @@ mod tests {
             .single()
             .unwrap();
         let after_midnight = before_midnight + Duration::hours(2);
-        assert!(
-            record_off_pc(
-                &pool,
-                TEST_SELF_ID.into(),
-                before_midnight.to_rfc3339(),
-                after_midnight.to_rfc3339(),
-                MEETING.into(),
-                "crosses date".into(),
-            )
-            .await
-            .is_err()
-        );
+        assert!(record_off_pc(
+            &pool,
+            TEST_SELF_ID.into(),
+            before_midnight.to_rfc3339(),
+            after_midnight.to_rfc3339(),
+            MEETING.into(),
+            "crosses date".into(),
+        )
+        .await
+        .is_err());
 
         let midnight = before_midnight + Duration::hours(1);
         let id = record_off_pc(
@@ -1008,61 +898,5 @@ mod tests {
             .await,
             3600
         );
-    }
-
-    #[tokio::test]
-    async fn rolls_back_category_group_and_outbox_on_activity_failure() {
-        let pool = fresh_test_pool().await;
-        pool.0
-            .call(|conn| {
-                conn.execute_batch(
-                    "CREATE TRIGGER fail_off_pc_activity_outbox
-                     BEFORE INSERT ON sync_outbox
-                     WHEN NEW.entity = 'activity'
-                     BEGIN SELECT RAISE(ABORT, 'test activity outbox failure'); END;",
-                )
-                .db()
-            })
-            .await
-            .unwrap();
-        let (from, to) = interval();
-        assert!(
-            record_off_pc(
-                &pool,
-                TEST_SELF_ID.into(),
-                from,
-                to,
-                EXAM.into(),
-                "rollback".into(),
-            )
-            .await
-            .is_err()
-        );
-        assert_eq!(
-            scalar(
-                &pool,
-                "SELECT COUNT(*) FROM categories WHERE name = 'PC 외 업무'",
-            )
-            .await,
-            0
-        );
-        assert_eq!(
-            scalar(
-                &pool,
-                "SELECT COUNT(*) FROM app_groups WHERE id LIKE 'off_pc:%'",
-            )
-            .await,
-            0
-        );
-        assert_eq!(
-            scalar(
-                &pool,
-                "SELECT COUNT(*) FROM app_group_members WHERE process_name LIKE 'off_pc:%'",
-            )
-            .await,
-            0
-        );
-        assert_eq!(scalar(&pool, "SELECT COUNT(*) FROM activities").await, 0);
-        assert_eq!(scalar(&pool, "SELECT COUNT(*) FROM sync_outbox").await, 0);
     }
 }

@@ -1,6 +1,6 @@
 //! 跨设备同步的 app icon 数据。
 //!
-//! 本机提取出来的 PNG 字节存这里 + 文件 cache + outbox；其它设备 pull 后也写这里。
+//! 本机提取出来的 PNG 字节存这里 + 文件 cache。
 //! 读取时 process_name 精确匹配 —— Win 和 mac 进程名不冲突，各自上传各自的，对方拿到
 //! 后能给从那台设备同步过来的 activity 行渲染出图标。
 
@@ -9,7 +9,6 @@ use std::path::{Path, PathBuf};
 use rusqlite::OptionalExtension;
 
 use crate::error::Result;
-use crate::repo::outbox::{enqueue, OutboxEntity, OutboxOp};
 use crate::storage::{db_path_dir, utc_now_rfc3339, DbPool, SqliteResultExt};
 
 /// 文件 cache 路径：`<data_root>/icons/<sanitized>.png`。
@@ -44,7 +43,7 @@ pub fn write_cache_file(path: &Path, bytes: &[u8]) {
     let _ = std::fs::write(path, bytes);
 }
 
-/// 写入本机刚提取的 icon：upsert app_icons 行，并且同事务入 outbox。
+/// 写入本机刚提取的 icon。
 pub async fn upsert_local(pool: &DbPool, process_name: &str, icon_png: &[u8]) -> Result<()> {
     let p = process_name.to_string();
     let bytes = icon_png.to_vec();
@@ -63,10 +62,6 @@ pub async fn upsert_local(pool: &DbPool, process_name: &str, icon_png: &[u8]) ->
             )
             .db()?;
 
-            // outbox payload 用不到 BLOB 内容，build 时会重新去 DB 查 —— 这里只放 process_name
-            // 让 group_outbox 能定位到 (DirtyKey::AppIcons)。
-            let payload = serde_json::json!({ "processName": p }).to_string();
-            enqueue(conn, OutboxOp::Upsert, OutboxEntity::AppIcon, &p, &payload).db()?;
             Ok(())
         })
         .await?;
@@ -74,14 +69,14 @@ pub async fn upsert_local(pool: &DbPool, process_name: &str, icon_png: &[u8]) ->
 }
 
 /// 启动时一次性 backfill：把老用户已经在文件 cache 里、但 app_icons 表里没记录的
-/// 图标灌进 DB。否则这些"开启同步前提取过的图标"永远不会入 outbox，对端永远拉不到。
+/// 图标灌进 DB，避免已有文件 cache 的图标在本机缺少数据库记录。
 ///
 /// 顺序：
 ///   1. 列所有 process_paths.process_name
 ///   2. 对每一个，看 app_icons 是否已经有 active 行 —— 有就跳过
 ///   3. 优先用文件 cache（直接读 PNG 字节）
 ///   4. fallback 到 exe 提取（SHGetFileInfo / icns），同步阻塞所以放 spawn_blocking
-///   5. 拿到字节 → upsert_local（写 DB + 入 outbox + 写文件 cache 由 upsert_local 的调用者负责，
+///   5. 拿到字节 → upsert_local（写 DB，写文件 cache 由 upsert_local 的调用者负责，
 ///      但 backfill 场景文件 cache 已经在，跳过这一步）
 ///
 /// 返回新写入的行数。每次启动都跑（已存在的会跳过，开销 = 一遍 SQL 查询）。

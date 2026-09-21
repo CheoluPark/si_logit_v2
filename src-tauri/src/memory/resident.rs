@@ -46,11 +46,11 @@ impl ResidentOcr {
         let handle = tokio::spawn(async move {
             let mut pipe = None;
             let mut was_on_ac = true;
-            log::info!("OCR 常驻模式启动");
+            log::info!("OCR resident mode started");
             loop {
                 for _ in 0..TICK_SECS {
                     if stop_for_task.load(Ordering::Relaxed) {
-                        log::info!("OCR 常驻模式停止,引擎释放");
+                        log::info!("OCR resident mode stopped, engine released");
                         return;
                     }
                     tokio::time::sleep(std::time::Duration::from_secs(1)).await;
@@ -59,14 +59,16 @@ impl ResidentOcr {
                 // 只在状态翻转时打日志,避免每分钟刷屏。
                 if !crate::platform::on_ac_power() {
                     if was_on_ac {
-                        log::info!("电池供电,常驻 OCR 暂停(插电后自动恢复)");
+                        log::info!(
+                            "on battery power, resident OCR paused (resumes when plugged in)"
+                        );
                         was_on_ac = false;
                     }
                     pipe = None;
                     continue;
                 }
                 if !was_on_ac {
-                    log::info!("接通电源,常驻 OCR 恢复");
+                    log::info!("AC power restored, resident OCR resumed");
                     was_on_ac = true;
                 }
                 if digest::is_running() {
@@ -78,7 +80,9 @@ impl ResidentOcr {
                     match digest::Pipeline::new().await {
                         Ok(p) => pipe = Some(p),
                         Err(err) => {
-                            log::warn!("常驻 OCR 引擎加载失败,下个周期重试: {err}");
+                            log::warn!(
+                                "resident OCR engine load failed, retrying next cycle: {err}"
+                            );
                             continue;
                         }
                     }
@@ -87,7 +91,7 @@ impl ResidentOcr {
                 match digest::drain(&mem, p, &stop_for_task).await {
                     Ok(_) => {}
                     // "已在运行" = 手动消化正在跑,让路即可
-                    Err(e) => log::debug!("常驻消化本轮跳过: {e}"),
+                    Err(e) => log::debug!("resident digest this round skipped: {e}"),
                 }
             }
         });

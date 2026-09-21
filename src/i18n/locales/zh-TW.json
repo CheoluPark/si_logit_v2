@@ -53,7 +53,6 @@
       "aiSummary": "AI 總結",
       "aiSettings": "AI 設定",
       "categories": "分類",
-      "devices": "雲同步",
       "settings": "設定",
       "chat": "對話"
     }
@@ -66,12 +65,6 @@
       "resting": "休息中",
       "stop": "停止採集",
       "toggleAria": "點選切換採集狀態"
-    },
-    "sync": {
-      "connected": "已連線",
-      "signedOut": "未登入",
-      "aria": "管理裝置與雲同步",
-      "title": "裝置 / 雲同步"
     }
   },
   "windowControls": {
@@ -784,6 +777,7 @@
       "models": "模型",
       "general": "常規",
       "prompt": "提示詞",
+      "jiraMcp": "Jira",
       "external": "雲端 API"
     },
     "engine": {
@@ -1073,141 +1067,25 @@
       "ocrDailyDescription": "每天到點自動辨識堆積的截圖",
       "addTimeAria": "新增一個時間點",
       "removeTimeAria": "移除最近新增的時間點"
+    },
+    "jiraMcp": {
+      "title": "Jira 連線",
+      "description": "連線至 Jira 伺服器，在 Work Log 頁面取得 Work Item。",
+      "urlLabel": "伺服器 URL",
+      "urlPlaceholder": "http://dxdev.satreci.com/mcpwork/mcp",
+      "patLabel": "Personal Access Token (PAT)",
+      "patPlaceholder": "貼上 PAT",
+      "worklogPromptLabel": "Work Log 範本提示詞",
+      "worklogPromptDescription": "產生 Work Log 說明時會一併使用。可指定格式或範本；事實仍以 OCR 和 Work Item 證據為準。",
+      "worklogPromptPlaceholder": "範例：[完成的工作]\n- 完成內容\n\n[結果]\n- 已確認的結果",
+      "characterCount": "{{count}} / 1,000 個字元"
     }
   },
   "devices": {
-    "title": "裝置",
-    "meta": "管理本機名稱，與其他裝置的同步狀態。",
     "sectionSelf": "本機",
-    "sectionOthers": "其他裝置",
-    "emptyOthers": "登入同賬號後，其他裝置會出現在這裡。",
-    "relative": {
-      "justNow": "剛剛",
-      "minutesAgo": "{{count}} 分鐘前",
-      "hoursAgo": "{{count}} 小時前",
-      "daysAgo": "{{count}} 天前"
-    },
-    "cloud": {
-      "state": {
-        "connected": "已連線 Google Drive",
-        "notSignedIn": "未連線",
-        "notConfigured": "未配置"
-      },
-      "desc": {
-        "signInPrompt": "用 Google 賬號登入，活動資料通過 Drive 在多裝置間同步。截圖不上傳。",
-        "configurePrompt": "首次使用前需要在 Google Cloud Console 建立一個 OAuth 憑證（約 3 分鐘）。"
-      },
-      "stats": {
-        "pending": "待發送 {{count}}",
-        "synced": "已同步 · {{when}}",
-        "waitingFirst": "等待首次同步",
-        "deadLetter": "· {{count}} 條失敗"
-      },
-      "editCreds": "改憑證",
-      "actions": {
-        "syncNow": "立即同步",
-        "syncing": "同步中…",
-        "syncNowTitle": "立即同步",
-        "signOut": "退出",
-        "signIn": "重新登入",
-        "signOutTitle": "退出當前賬號",
-        "reauthTitle": "憑證失效，重新登入重新整理 token",
-        "signInWithGoogle": "用 Google 登入",
-        "signingIn": "瀏覽器中…",
-        "configureOAuth": "配置 OAuth",
-        "restartApp": "重啟 app"
-      },
-      "restartHint": "已登入到新的賬號，需要重啟 app 才能切換到該賬號的本地資料庫。",
-      "datasets": {
-        "title": "同步內容",
-        "hint": "預設只同步使用統計與分類等基礎資料。以下內容包含更敏感的資訊，需單獨開啟；截圖圖片本體永不上雲。",
-        "summaries": {
-          "label": "AI 總結文字",
-          "desc": "日報 / 週報的生成文字，跨裝置查看報告。",
-          "warn": "開啟後，日報和週報的全文（含其中提到的檔名、網頁與影片標題）將上傳到你的 Google Drive 應用資料區，並同步到你登入同一帳號的其它裝置。"
-        },
-        "chat": {
-          "label": "聊天歷史",
-          "desc": "對話的會話與訊息，跨裝置繼續追問。",
-          "warn": "開啟後，「對話」的全部會話與訊息——包括你的提問和答案中引用的螢幕文字片段——將上傳到你的 Google Drive 應用資料區，並同步到其它裝置。"
-        },
-        "memory": {
-          "label": "螢幕記憶全文",
-          "desc": "螢幕上出現過的文字索引，跨裝置搜尋。敏感度最高。",
-          "warn": "開啟後，螢幕記憶索引的全部文字——即你的螢幕上出現過的逐字內容（聊天記錄、郵件、程式碼、網頁等）——將上傳到你的 Google Drive 應用資料區，並同步到其它裝置。這是敏感度最高的一檔，請確認你信任該帳號下的所有裝置。"
-        },
-        "confirmTitle": "上傳「{{dataset}}」到雲端？",
-        "confirmNote": "資料僅存放在你自己的 Google Drive 應用資料區（第三方應用不可見），可隨時關閉開關並用「清除雲端資料」刪除。",
-        "confirmAction": "我了解風險，開啟"
-      },
-      "oauthFallback": {
-        "hint": "瀏覽器沒有自動開啟？複製登入連結，貼到任意瀏覽器完成登入。",
-        "copy": "複製登入連結",
-        "copied": "已複製"
-      }
-    },
-    "errors": {
-      "credExpired": "登入憑證失效，請重新登入。",
-      "transient": "同步暫時失敗，正在自動重試…"
-    },
-    "setup": {
-      "header": "OAuth 憑證設定",
-      "collapse": "收起",
-      "step1": {
-        "title": "啟用 Google Drive API",
-        "bodyPrefix": "點選 ",
-        "cueEnable": "啟用",
-        "bodySuffix": " 按鈕。",
-        "openLink": "開啟 Drive API"
-      },
-      "step2": {
-        "title": "配置 OAuth 同意頁",
-        "bodyPrefix": "首次進入可能要先點選 ",
-        "cueStart": "開始",
-        "bodyMiddle": " 按鈕 → 隨意填寫應用程式名稱與郵箱 → 受眾群體選擇 外部 → 在聯絡資訊裡再次填寫郵箱地址 → 點選 ",
-        "cueCreate": "建立",
-        "bodySuffix": " 按鈕。",
-        "openLink": "開啟 Audience"
-      },
-      "step3": {
-        "title": "建立 OAuth 客戶端",
-        "bodyPrefix": "左側 客戶端 → 點選上方 ",
-        "cueCreateClient": "+建立新客戶端",
-        "bodySuffix": " → 應用程式型別選擇 桌面應用程式 → 名稱隨意，然後會顯示 客戶端 ID 與 客戶端金鑰。",
-        "openLink": "開啟 Clients"
-      },
-      "step4": {
-        "title": "把 客戶端 ID 和 客戶端金鑰 貼上到下面",
-        "clientIdLabel": "客戶端 ID",
-        "secretLabel": "客戶端金鑰",
-        "showSecret": "顯示客戶端金鑰",
-        "hideSecret": "隱藏客戶端金鑰",
-        "show": "顯示",
-        "hide": "隱藏"
-      }
-    },
     "self": {
       "tag": "本機",
-      "lastActivity": "上次活動: {{when}}",
-      "todayCount": "今日採集 {{count}} 條",
-      "appearanceAria": "改外觀",
-      "appearanceTitle": "改顏色和圖示",
-      "doubleClickToRename": "雙擊改名",
-      "renameAria": "改名",
       "renameTitle": "改名"
-    },
-    "other": {
-      "lastSync": "上次同步: {{when}}",
-      "forgetAria": "從雲端移除 {{name}}",
-      "forgetTitle": "從雲端永久移除這臺裝置"
-    },
-    "forgetDialog": {
-      "title": "從雲端移除「{{name}}」？",
-      "intro": "將永久刪除這臺裝置在 Google Drive 裡的全部資料，以及本機/其他裝置上跟它相關的所有活動記錄。其他裝置下次連線上雲盤時也會一併清理這臺裝置的相關所有資料。",
-      "unaffected": "適用場景：這臺裝置已經不在你手裡了（賣了 / 丟了 / 換機器了），當時忘了從雲端清掉它的資料，現在殘留記錄還出現在其他裝置上。",
-      "confirm": "永久移除",
-      "doneToast": "已從雲端移除「{{name}}」，刪除 {{count}} 個 Drive 檔案。",
-      "error": "移除失敗：{{message}}"
     }
   },
   "aiSummary": {

@@ -306,12 +306,14 @@ pub async fn load(pool: &DbPool) -> Result<Settings> {
     let (mut settings, parse_failed) = match serde_json::from_str::<Settings>(&data) {
         Ok(s) => (s, false),
         Err(e) => {
-            log::error!("settings JSON 解析失败（本次使用默认值、不回写）: {e}");
+            log::error!(
+                "Failed to parse settings JSON (using defaults this session, not overwriting): {e}"
+            );
             if let Ok(dir) = crate::storage::db_path_dir() {
                 let backup = dir.join("settings_store.corrupt.json");
                 match std::fs::write(&backup, redact_secrets(&data)) {
-                    Ok(()) => log::error!("原始 settings 已备份到 {}", backup.display()),
-                    Err(we) => log::error!("备份原始 settings 失败: {we}"),
+                    Ok(()) => log::error!("Original settings backed up to {}", backup.display()),
+                    Err(we) => log::error!("Failed to backup original settings: {we}"),
                 }
             }
             (Settings::default(), true)
@@ -361,7 +363,7 @@ pub async fn load(pool: &DbPool) -> Result<Settings> {
             &mut po.system_pt,
         ] {
             if !field.is_empty() && STALE_MARKERS.iter().any(|m| field.contains(m)) {
-                log::info!("清除旧管线时代的 system prompt 覆盖(与活动时间线输入不兼容)");
+                log::info!("Cleared stale pipeline-era system prompt override (incompatible with activity timeline input)");
                 field.clear();
                 dirty = true;
             }
@@ -435,7 +437,7 @@ pub async fn apply_preset_if_present(pool: &DbPool) -> Result<()> {
     let preset_raw = match std::fs::read_to_string(&preset_path) {
         Ok(s) => s,
         Err(e) => {
-            log::error!("preset.json 读取失败: {e}");
+            log::error!("Failed to read preset.json: {e}");
             let _ = std::fs::rename(&preset_path, dir.join("preset.failed.json"));
             return Ok(());
         }
@@ -444,7 +446,7 @@ pub async fn apply_preset_if_present(pool: &DbPool) -> Result<()> {
     let preset: serde_json::Value = match serde_json::from_str(&preset_raw) {
         Ok(v) => v,
         Err(e) => {
-            log::error!("preset.json 解析失败: {e}");
+            log::error!("Failed to parse preset.json: {e}");
             let _ = std::fs::rename(&preset_path, dir.join("preset.failed.json"));
             return Ok(());
         }
@@ -476,10 +478,10 @@ pub async fn apply_preset_if_present(pool: &DbPool) -> Result<()> {
     match serde_json::from_value::<Settings>(merged) {
         Ok(new_settings) => {
             save(pool, &new_settings).await?;
-            log::info!("preset.json 已应用到 settings");
+            log::info!("preset.json applied to settings");
         }
         Err(e) => {
-            log::error!("preset.json 合并后反序列化失败(不影响启动): {e}");
+            log::error!("Failed to deserialize merged preset.json (not blocking startup): {e}");
             let _ = std::fs::rename(&preset_path, dir.join("preset.failed.json"));
             return Ok(());
         }
@@ -487,7 +489,7 @@ pub async fn apply_preset_if_present(pool: &DbPool) -> Result<()> {
 
     match std::fs::rename(&preset_path, dir.join("preset.applied.json")) {
         Ok(()) => log::info!("preset.json → preset.applied.json"),
-        Err(e) => log::warn!("preset.json rename 失败(不影响启动): {e}"),
+        Err(e) => log::warn!("preset.json rename failed (not blocking startup): {e}"),
     }
 
     Ok(())
@@ -975,7 +977,10 @@ mod tests {
                 "ai": {"jiraMcp": {"pat": "new-pat"}}
             }),
         );
-        assert_eq!(base["captureIntervalSeconds"], 60, "scalar는 preset 값으로 교체");
+        assert_eq!(
+            base["captureIntervalSeconds"], 60,
+            "scalar는 preset 값으로 교체"
+        );
         assert_eq!(
             base["workRanges"][0]["start"], "08:00",
             "array는 통째로 교체 (preset이 주면)"

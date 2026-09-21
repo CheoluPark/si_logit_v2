@@ -66,6 +66,7 @@ impl AiOverrides {
         if let Some(v) = self.system_prompt {
             match lang.as_str() {
                 "en" => ai.prompt_overrides.system_en = v,
+                "ko" => ai.prompt_overrides.system_ko = v,
                 "ja" => ai.prompt_overrides.system_ja = v,
                 "pt" => ai.prompt_overrides.system_pt = v,
                 "es" => ai.prompt_overrides.system_es = v,
@@ -129,8 +130,10 @@ mod tests {
 
     #[test]
     fn some_overrides_get_applied() {
-        let base = AiConfig::default();
+        let mut base = AiConfig::default();
+        base.prompt_language = "ko".into();
         let merged = AiOverrides {
+            system_prompt: Some("한국어 커스텀 프롬프트".into()),
             batch_size: Some(2048),
             parallel_slots: Some(4),
             ctx_size: Some(16384),
@@ -140,6 +143,7 @@ mod tests {
         assert_eq!(merged.batch_size, Some(2048));
         assert_eq!(merged.parallel_slots, Some(4));
         assert_eq!(merged.ctx_size, Some(16384));
+        assert_eq!(merged.prompt_overrides.system_ko, "한국어 커스텀 프롬프트");
     }
 
     #[test]

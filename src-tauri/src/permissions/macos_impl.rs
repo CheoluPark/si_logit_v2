@@ -36,7 +36,7 @@ pub fn ensure_screen_recording() -> ScreenRecordingState {
     let marker = crate::bootstrap::data_root().join(REQUESTED_MARKER_FILE);
     if marker.exists() {
         log::warn!(
-            "Screen Recording preflight=false 但已请求过；跳过系统弹框（去系统设置 → 隐私与安全性 手动授权）"
+            "Screen Recording preflight=false but already requested; skipping system dialog (grant manually in System Settings → Privacy & Security)"
         );
         return ScreenRecordingState::NotGranted;
     }

@@ -6,7 +6,6 @@ pub mod builtin_categories;
 pub mod categories;
 pub mod cross_os_aliases;
 pub mod devices;
-pub mod outbox;
 pub mod off_pc;
 pub mod process_paths;
 pub mod reports;

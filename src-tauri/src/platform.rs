@@ -56,7 +56,7 @@ pub fn apply_window_tweaks(window: &tauri::WebviewWindow) {
                 );
             }
         }
-        Err(e) => log::warn!("拿主窗口 HWND 失败: {e}"),
+        Err(e) => log::warn!("Failed to get main window HWND: {e}"),
     }
 }
 
@@ -82,7 +82,7 @@ pub fn set_dock_icon_visible(app: &tauri::AppHandle, visible: bool) {
         ActivationPolicy::Accessory
     };
     if let Err(e) = app.set_activation_policy(policy) {
-        log::warn!("切换 Dock 图标可见性失败 (visible={visible}): {e}");
+        log::warn!("Failed to toggle Dock icon visibility (visible={visible}): {e}");
     }
 }
 
@@ -174,25 +174,25 @@ pub fn schedule_webview_suspend(window: &tauri::WebviewWindow) {
             };
             let Ok(wv3) = core.cast::<ICoreWebView2_3>() else {
                 // WebView2 运行时过旧（< 1.0.774）才会走到这，正常渠道不会
-                log::warn!("WebView2 无 ICoreWebView2_3，跳过挂起");
+                log::warn!("WebView2 missing ICoreWebView2_3, skipping suspend");
                 return;
             };
             let handler = TrySuspendCompletedHandler::create(Box::new(|hr, ok| {
                 match (hr, ok) {
-                    (Ok(()), true) => log::info!("webview 已挂起，渲染进程内存交还 OS"),
+                    (Ok(()), true) => log::info!("Webview suspended, rendering process memory returned to OS"),
                     (Ok(()), false) => {
-                        log::info!("webview 挂起被引擎拒绝（睡眠条件不满足），不影响功能");
+                        log::info!("Webview suspend rejected by engine (sleep conditions not met), no functional impact");
                     }
-                    (Err(e), _) => log::warn!("webview 挂起失败: {e}"),
+                    (Err(e), _) => log::warn!("Webview suspend failed: {e}"),
                 }
                 Ok(())
             }));
             if let Err(e) = wv3.TrySuspend(&handler) {
-                log::warn!("TrySuspend 调用失败: {e}");
+                log::warn!("TrySuspend call failed: {e}");
             }
         });
         if let Err(e) = r {
-            log::warn!("with_webview(挂起) 失败: {e}");
+            log::warn!("with_webview(suspend) failed: {e}");
         }
     });
 }
@@ -224,12 +224,12 @@ pub fn resume_webview_if_suspended(window: &tauri::WebviewWindow) {
         let mut suspended = windows_core::BOOL(0);
         if wv3.IsSuspended(&mut suspended).is_ok() && suspended.as_bool() {
             if let Err(e) = wv3.Resume() {
-                log::warn!("webview 恢复失败: {e}");
+                log::warn!("Webview resume failed: {e}");
             }
         }
     });
     if let Err(e) = r {
-        log::warn!("with_webview(恢复) 失败: {e}");
+        log::warn!("with_webview(resume) failed: {e}");
     }
 }
 
@@ -494,7 +494,7 @@ mod windows_screen_state {
                 .name("screen-state-watcher".into())
                 .spawn(run_message_window)
                 .map(|_| ())
-                .unwrap_or_else(|e| log::warn!("屏幕状态监听线程启动失败: {e}"));
+                .unwrap_or_else(|e| log::warn!("Failed to start screen state watcher thread: {e}"));
         });
     }
 
@@ -522,7 +522,7 @@ mod windows_screen_state {
                 ..std::mem::zeroed()
             };
             if RegisterClassW(&wc) == 0 {
-                log::warn!("屏幕状态监听: RegisterClassW 失败");
+                log::warn!("Screen state watcher: RegisterClassW failed");
                 return;
             }
             let hwnd = CreateWindowExW(
@@ -540,7 +540,7 @@ mod windows_screen_state {
                 std::ptr::null_mut(),
             );
             if hwnd.is_null() {
-                log::warn!("屏幕状态监听: CreateWindowExW 失败");
+                log::warn!("Screen state watcher: CreateWindowExW failed");
                 return;
             }
             if RegisterPowerSettingNotification(
@@ -550,10 +550,10 @@ mod windows_screen_state {
             )
             .is_null()
             {
-                log::warn!("屏幕状态监听: 显示器电源通知注册失败(息屏检测降级)");
+                log::warn!("Screen state watcher: display power notification registration failed (screen-off detection degraded)");
             }
             if WTSRegisterSessionNotification(hwnd, NOTIFY_FOR_THIS_SESSION) == 0 {
-                log::warn!("屏幕状态监听: 会话锁通知注册失败(锁屏检测降级)");
+                log::warn!("Screen state watcher: session lock notification registration failed (lock-screen detection degraded)");
             }
             let mut msg: MSG = std::mem::zeroed();
             while GetMessageW(&mut msg, std::ptr::null_mut(), 0, 0) > 0 {
@@ -577,7 +577,7 @@ mod windows_screen_state {
                     // Data 载荷是一个 DWORD：0=息屏 1=亮屏 2=调暗(仍可看,不算息屏)
                     let state = *(s.Data.as_ptr() as *const u32);
                     DISPLAY_OFF.store(state == 0, Ordering::Relaxed);
-                    log::debug!("显示器电源状态变更: {state}");
+                    log::debug!("Display power state changed: {state}");
                 }
                 1 // TRUE
             }

@@ -1147,7 +1147,11 @@ mod tests {
             1
         );
         assert_eq!(
-            count(&pool, "SELECT COUNT(*) FROM super_categories WHERE id = 'office' AND deleted_at IS NULL").await,
+            count(
+                &pool,
+                "SELECT COUNT(*) FROM super_categories WHERE id = 'office' AND deleted_at IS NULL"
+            )
+            .await,
             1
         );
         assert_eq!(
@@ -1155,13 +1159,21 @@ mod tests {
             0
         );
         assert_eq!(
-            count(&pool, "SELECT COUNT(*) FROM super_categories WHERE id = 'play' AND deleted_at IS NULL").await,
+            count(
+                &pool,
+                "SELECT COUNT(*) FROM super_categories WHERE id = 'play' AND deleted_at IS NULL"
+            )
+            .await,
             0
         );
 
         // v40: design 아이콘 Brush → Box
         assert_eq!(
-            count(&pool, "SELECT COUNT(*) FROM categories WHERE id = 'design' AND icon = 'Box'").await,
+            count(
+                &pool,
+                "SELECT COUNT(*) FROM categories WHERE id = 'design' AND icon = 'Box'"
+            )
+            .await,
             1
         );
     }

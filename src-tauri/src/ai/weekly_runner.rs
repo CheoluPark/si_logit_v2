@@ -169,7 +169,10 @@ impl WeekSummaryRunner {
                     )
                     .await
                     .unwrap_or_else(|e| {
-                        log::warn!("拉缺失日 top apps 失败（{}）：{e}", day_str);
+                        log::warn!(
+                            "failed to fetch top apps for missing day ({}): {e}",
+                            day_str
+                        );
                         Vec::new()
                     });
                     if !day_apps.is_empty() {
@@ -197,7 +200,11 @@ impl WeekSummaryRunner {
         )
         .await
         .unwrap_or_else(|e| {
-            log::warn!("拉一周 top apps 失败（{}~{}）：{e}", week_key, end_key);
+            log::warn!(
+                "failed to fetch weekly top apps ({}~{}): {e}",
+                week_key,
+                end_key
+            );
             Vec::new()
         });
 
@@ -328,7 +335,7 @@ impl WeekSummaryRunner {
         // 写不进去也得让上层 emit segment_done，至少前端能看到红色 error badge
         if let Err(e) = ai_summaries::upsert_segment(&self.pool, &row).await {
             log::error!(
-                "ai_summaries upsert 失败（weekly {} status={}）：{e}",
+                "ai_summaries upsert failed (weekly {} status={}): {e}",
                 week_key,
                 row.status
             );
@@ -397,11 +404,13 @@ impl WeekSummaryRunner {
                     return Ok(p);
                 }
                 log::info!(
-                    "weekly ensure_engine_running: 已加载模型/参数与周报需求不符，重启换模 (want={})",
+                    "weekly ensure_engine_running: loaded model/params do not match weekly report requirements, restarting with different model (want={})",
                     main_path.display()
                 );
                 if let Err(e) = self.supervisor.stop().await {
-                    log::warn!("换模前 stop 引擎失败（继续尝试启动）: {e}");
+                    log::warn!(
+                        "failed to stop engine before model swap (will still try to start): {e}"
+                    );
                 }
             }
         }
@@ -424,7 +433,7 @@ impl WeekSummaryRunner {
 
     fn emit(&self, payload: SummaryProgress) {
         if let Err(e) = self.app.emit(SUMMARY_PROGRESS_EVENT, &payload) {
-            log::warn!("emit {SUMMARY_PROGRESS_EVENT} 失败: {e}");
+            log::warn!("emit {SUMMARY_PROGRESS_EVENT} failed: {e}");
         }
     }
 
@@ -496,13 +505,14 @@ fn weekly_label(week_start: &str, week_end: &str) -> String {
 /// 当某天没日报但有活动数据时，把当日 top apps 列表拼成一段"代日报"文本。
 ///
 /// 拼装格式：第一行打 marker 标签让 LLM 一眼识别"这天没日报、只有应用统计"；
-/// 余下是跟段总结 user prompt 同款的应用列表。三语都遵守同样的 marker 结构，
+/// 余下是跟段总结 user prompt 同款的应用列表。各语言都遵守同样的 marker 结构，
 /// weekly_*.md 里有对应说明告诉模型遇到 marker 时怎么处理。
 fn format_missing_day_fallback(lang: &str, day_apps: &[(String, u32, String)]) -> String {
     // marker 必须与各语言 weekly_*.md 里教模型识别的字符串**逐字一致**——
     // 对不上的话模型会把占位块当正文（葡语周报里混中文就是这么来的）。
     let (marker, header) = match lang {
         "en" => ("[No daily report; app stats only]", "Top apps used:"),
+        "ko" => ("[일일 보고서 없음; 앱 통계만]", "많이 사용한 앱:"),
         "ja" => (
             "[この日は日報なし、アプリ統計のみ]",
             "最も使用されたアプリ：",
@@ -521,6 +531,7 @@ fn format_missing_day_fallback(lang: &str, day_apps: &[(String, u32, String)]) -
     for (name, minutes, category) in day_apps.iter().take(8) {
         match lang {
             "en" => out.push_str(&format!("- {} ({} min · {})\n", name, minutes, category)),
+            "ko" => out.push_str(&format!("- {} ({}분 · {})\n", name, minutes, category)),
             "ja" => out.push_str(&format!("- {}（{} 分 · {}）\n", name, minutes, category)),
             "pt" => out.push_str(&format!("- {} ({} min · {})\n", name, minutes, category)),
             _ => out.push_str(&format!("- {}（{} 分钟 · {}）\n", name, minutes, category)),
@@ -602,7 +613,7 @@ pub async fn precheck_week(pool: &DbPool, week_start: NaiveDate) -> Result<WeekP
             {
                 Ok(rows) => !rows.is_empty(),
                 Err(e) => {
-                    log::warn!("precheck_week 查 top apps 失败（{}）：{e}", day_str);
+                    log::warn!("precheck_week failed to query top apps ({}): {e}", day_str);
                     false
                 }
             }
@@ -708,10 +719,11 @@ mod tests {
         let apps: Vec<(String, u32, String)> = (0..10)
             .map(|i| (format!("App{i}"), 30 + i, "工作".to_string()))
             .collect();
-        // 四语 marker 必须与 weekly_*.md 的教学字符串逐字一致
+        // 各语言 marker 必须与 weekly_*.md 的教学字符串逐字一致
         for (lang, marker) in [
             ("zh", "[当日无日报，仅应用统计]"),
             ("en", "[No daily report; app stats only]"),
+            ("ko", "[일일 보고서 없음; 앱 통계만]"),
             ("ja", "[この日は日報なし、アプリ統計のみ]"),
             ("pt", "[Sem relatório diário; apenas estatísticas de apps]"),
         ] {
@@ -725,5 +737,6 @@ mod tests {
         }
         assert!(format_missing_day_fallback("zh", &apps).contains("分钟"));
         assert!(format_missing_day_fallback("en", &apps).contains("min"));
+        assert!(format_missing_day_fallback("ko", &apps).contains("분"));
     }
 }

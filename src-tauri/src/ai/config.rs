@@ -52,7 +52,6 @@ pub struct ExternalProfile {
 }
 
 /// Jira MCP 서버 연결 설정 (Work Log 페이지에서 Work Item 조회용).
-/// transport는 현재 "remote"(MCP over HTTP)만 지원.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase", default)]
 pub struct JiraMcpConfig {
@@ -60,9 +59,6 @@ pub struct JiraMcpConfig {
     pub url: String,
     /// Personal Access Token (Bearer 인증용, settings JSON에 평문 저장 — 기존 api_key 패턴과 동일)
     pub pat: String,
-    /// 연결 방식: "remote" (현재 유일)
-    #[serde(default = "default_jira_transport")]
-    pub transport: String,
 }
 
 impl Default for JiraMcpConfig {
@@ -70,13 +66,8 @@ impl Default for JiraMcpConfig {
         Self {
             url: "http://dxdev.satreci.com/mcpwork/mcp".to_string(),
             pat: String::new(),
-            transport: default_jira_transport(),
         }
     }
-}
-
-fn default_jira_transport() -> String {
-    "remote".to_string()
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -149,7 +140,7 @@ pub struct AiConfig {
     #[serde(default = "default_chat_thinking")]
     pub chat_thinking: String,
     /// AI 总结使用的提示词语言（决定模型出哪种语言的总结 + 默认提示词模板用哪套）。
-    /// 取值 "zh" / "tw" / "en" / "ja" / "pt"；非法值 sanitize 时回退到 "zh"。
+    /// 取值 "zh" / "tw" / "en" / "ja" / "pt" / "es" / "ko"；非法值 sanitize 时回退到 "zh"。
     pub prompt_language: String,
     /// 用户对内置 system prompt（段总结）的覆盖；按语言分别存。
     /// 某语言对应字段为空 = 用内置默认；非空 = 走覆盖。
@@ -198,6 +189,9 @@ pub struct AiConfig {
     /// Jira MCP 서버 연결 설정 (URL/PAT). Work Log 페이지의 fetch_work_items가 사용.
     #[serde(default)]
     pub jira_mcp: JiraMcpConfig,
+    /// Optional user template appended to the fixed Work Log system prompt.
+    #[serde(default)]
+    pub jira_worklog_prompt: String,
 }
 
 impl AiConfig {
@@ -306,6 +300,9 @@ pub struct PromptOverrides {
     pub system_zh: String,
     /// 英文 system prompt 覆盖
     pub system_en: String,
+    /// 韩文 system prompt 覆盖
+    #[serde(default)]
+    pub system_ko: String,
     /// 日文 system prompt 覆盖
     pub system_ja: String,
     /// 葡萄牙语（巴西）system prompt 覆盖
@@ -351,6 +348,7 @@ impl Default for AiConfig {
             summary_parallel_slots: None,
             summary_ctx_size: None,
             jira_mcp: JiraMcpConfig::default(),
+            jira_worklog_prompt: String::new(),
         }
     }
 }
@@ -370,6 +368,7 @@ pub fn default_segments_for(lang: &str) -> Vec<AiSegment> {
             "Afternoon",
             "Evening",
         ],
+        "ko" => ["심야", "이른 아침", "오전", "오후", "저녁"],
         "ja" => ["深夜", "早朝", "午前", "午後", "夜"],
         "pt" => ["Madrugada", "Manhã cedo", "Manhã", "Tarde", "Noite"],
         "es" => ["Madrugada", "Amanecer", "Mañana", "Tarde", "Noche"],
@@ -388,34 +387,38 @@ pub fn default_segments_for(lang: &str) -> Vec<AiSegment> {
         .collect()
 }
 
-/// 从系统 locale 推默认 prompt 语言：繁体圈 → "tw"、其余 `zh-*` → "zh"、`ja-*` → "ja"、
-/// `pt-*` → "pt"、`es-*` → "es"、其它 → "en"。
+/// 从系统 locale 推默认 prompt 语言：繁体圈 → "tw"、其余 `zh-*` → "zh"、`ko-*` → "ko"、
+/// `ja-*` → "ja"、`pt-*` → "pt"、`es-*` → "es"、其它 → "en"。
 /// 仅在首次安装 `AiConfig::default()` 时调一次；用户后续在 UI 改了再不动。
 pub fn detect_default_lang() -> &'static str {
     match sys_locale::get_locale() {
-        Some(loc) => {
-            let l = loc.to_ascii_lowercase();
-            if l.starts_with("zh") {
-                // 繁体圈（台湾 / 香港 / 澳门 / Hant 脚本）→ 繁体提示词
-                let hant = [
-                    "zh-tw", "zh_tw", "zh-hk", "zh_hk", "zh-mo", "zh_mo", "zh-hant", "zh_hant",
-                ];
-                if hant.iter().any(|p| l.starts_with(p)) {
-                    "tw"
-                } else {
-                    "zh"
-                }
-            } else if l.starts_with("ja") {
-                "ja"
-            } else if l.starts_with("pt") {
-                "pt"
-            } else if l.starts_with("es") {
-                "es"
-            } else {
-                "en"
-            }
-        }
+        Some(loc) => lang_from_locale(&loc),
         None => "en",
+    }
+}
+
+fn lang_from_locale(loc: &str) -> &'static str {
+    let l = loc.to_ascii_lowercase();
+    if l.starts_with("zh") {
+        // 繁体圈（台湾 / 香港 / 澳门 / Hant 脚本）→ 繁体提示词
+        let hant = [
+            "zh-tw", "zh_tw", "zh-hk", "zh_hk", "zh-mo", "zh_mo", "zh-hant", "zh_hant",
+        ];
+        if hant.iter().any(|p| l.starts_with(p)) {
+            "tw"
+        } else {
+            "zh"
+        }
+    } else if l.starts_with("ko") {
+        "ko"
+    } else if l.starts_with("ja") {
+        "ja"
+    } else if l.starts_with("pt") {
+        "pt"
+    } else if l.starts_with("es") {
+        "es"
+    } else {
+        "en"
     }
 }
 
@@ -529,11 +532,18 @@ pub fn sanitize(mut next: AiConfig, old: &AiConfig) -> AiConfig {
     next.summary_main = next.summary_main.trim().to_string();
     next.summary_mmproj = next.summary_mmproj.trim().to_string();
     next.chat_main = next.chat_main.trim().to_string();
+    next.jira_worklog_prompt = next
+        .jira_worklog_prompt
+        .trim()
+        .chars()
+        .take(1_000)
+        .collect();
 
     // prompt_language 限制取值；非法回退到 zh
     next.prompt_language = match next.prompt_language.trim() {
         "tw" => "tw".to_string(),
         "en" => "en".to_string(),
+        "ko" => "ko".to_string(),
         "ja" => "ja".to_string(),
         "pt" => "pt".to_string(),
         "es" => "es".to_string(),
@@ -542,6 +552,7 @@ pub fn sanitize(mut next: AiConfig, old: &AiConfig) -> AiConfig {
     // 覆盖文本不 trim 中间空白（用户可能想保留缩进），仅去前后整体空白
     next.prompt_overrides.system_zh = next.prompt_overrides.system_zh.trim().to_string();
     next.prompt_overrides.system_en = next.prompt_overrides.system_en.trim().to_string();
+    next.prompt_overrides.system_ko = next.prompt_overrides.system_ko.trim().to_string();
     next.prompt_overrides.system_ja = next.prompt_overrides.system_ja.trim().to_string();
     next.prompt_overrides.system_pt = next.prompt_overrides.system_pt.trim().to_string();
     next.prompt_overrides.system_tw = next.prompt_overrides.system_tw.trim().to_string();
@@ -588,7 +599,7 @@ mod tests {
 
     /// 合法 prompt 语言全集。测试里独立列一份，不引用 sanitize 内部的 match——
     /// 若产品代码误删某语言，这里会红。
-    const VALID_LANGS: [&str; 5] = ["zh", "tw", "en", "ja", "pt"];
+    const VALID_LANGS: [&str; 7] = ["zh", "tw", "en", "ja", "pt", "es", "ko"];
 
     /// 造一个"干净"的基准配置。基于 Default，但把 prompt_language 固定成 "zh"，
     /// 避免 Default 里 detect_default_lang 随宿主 locale 变化导致断言不稳定。
@@ -817,6 +828,37 @@ mod tests {
     }
 
     #[test]
+    fn jira_worklog_prompt_roundtrips_and_caps_unicode_safely() {
+        let mut next = base();
+        next.jira_worklog_prompt = format!("  {}  ", "界".repeat(1_001));
+        let out = sanitize(next, &base());
+
+        assert_eq!(out.jira_worklog_prompt.chars().count(), 1_000);
+        assert!(out.jira_worklog_prompt.chars().all(|c| c == '界'));
+
+        let json = serde_json::to_string(&out).unwrap();
+        assert!(json.contains("\"jiraWorklogPrompt\""));
+        let parsed: AiConfig = serde_json::from_str("{}").unwrap();
+        assert!(parsed.jira_worklog_prompt.is_empty());
+    }
+
+    #[test]
+    fn jira_mcp_ignores_legacy_transport_field() {
+        let parsed: AiConfig = serde_json::from_str(
+            r#"{"jiraMcp":{"url":"https://jira.example/mcp","pat":"old-pat","transport":"remote"}}"#,
+        )
+        .unwrap();
+
+        assert_eq!(parsed.jira_mcp.url, "https://jira.example/mcp");
+        assert_eq!(parsed.jira_mcp.pat, "old-pat");
+        let saved = serde_json::to_value(&parsed).unwrap();
+        assert!(!saved["jiraMcp"]
+            .as_object()
+            .unwrap()
+            .contains_key("transport"));
+    }
+
+    #[test]
     fn sanitize_prompt_overrides_trim_edges_keep_inner_indent() {
         // 用户自定义 prompt 里的内部缩进/换行是有意排版，只能去首尾整体空白；
         // 纯空白视为"没写覆盖"归空，否则会以空白 prompt 顶掉内置默认。
@@ -827,12 +869,14 @@ mod tests {
         next.prompt_overrides.system_ja = "   \n\t  ".to_string(); // 纯空白 → 空
         next.prompt_overrides.system_pt = "single".to_string();
         next.prompt_overrides.system_tw = "\t保留\t中间\ttab\t".to_string();
+        next.prompt_overrides.system_ko = "  한국어 안내  ".to_string();
         let out = sanitize(next, &base());
         assert_eq!(out.prompt_overrides.system_zh, "第一行\n    缩进第二行");
         assert_eq!(out.prompt_overrides.system_en, "第一行\n    缩进第二行");
         assert_eq!(out.prompt_overrides.system_ja, "");
         assert_eq!(out.prompt_overrides.system_pt, "single");
         assert_eq!(out.prompt_overrides.system_tw, "保留\t中间\ttab");
+        assert_eq!(out.prompt_overrides.system_ko, "한국어 안내");
     }
 
     #[test]
@@ -1020,12 +1064,12 @@ mod tests {
             .iter()
             .map(|s| s.label.clone())
             .collect();
+        assert_eq!(tw, zh, "tw 回退中文组");
         let ko: Vec<String> = default_segments_for("ko")
             .iter()
             .map(|s| s.label.clone())
             .collect();
-        assert_eq!(tw, zh, "tw 回退中文组");
-        assert_eq!(ko, zh, "未知语言回退中文组");
+        assert_eq!(ko, ["심야", "이른 아침", "오전", "오후", "저녁"]);
         assert!(zh.iter().all(|l| !l.is_empty()));
     }
 
@@ -1045,6 +1089,12 @@ mod tests {
         next.prompt_language = lang.to_string();
         let out = sanitize(next, &base());
         assert_eq!(out.prompt_language, lang, "探测结果必须能原样通过 sanitize");
+    }
+
+    #[test]
+    fn korean_locales_select_korean_prompt_language() {
+        assert_eq!(lang_from_locale("ko-KR"), "ko");
+        assert_eq!(lang_from_locale("ko_KR"), "ko");
     }
 
     // ---------- AiConfig::default + serde 兼容 ----------
@@ -1099,6 +1149,7 @@ mod tests {
             "\"activeMain\"",
             "\"promptOverrides\"",
             "\"systemZh\"",
+            "\"systemKo\"",
         ] {
             assert!(json.contains(key), "序列化输出应含 {key}，实际: {json}");
         }
@@ -1115,7 +1166,7 @@ mod tests {
                 "activeMain": "m.gguf",
                 "batchSize": 256,
                 "segments": [{"label": "x", "startHour": 1, "endHour": 2, "color": "#aabbcc"}],
-                "promptOverrides": {"systemJa": "覆盖"}
+                "promptOverrides": {"systemJa": "覆盖", "systemKo": "한국어"}
             }"##,
         )
         .expect("camelCase JSON 应能反序列化");
@@ -1127,6 +1178,7 @@ mod tests {
         assert_eq!(parsed.segments.len(), 1);
         assert_eq!(parsed.segments[0].start_hour, 1);
         assert_eq!(parsed.prompt_overrides.system_ja, "覆盖");
+        assert_eq!(parsed.prompt_overrides.system_ko, "한국어");
     }
 
     #[test]

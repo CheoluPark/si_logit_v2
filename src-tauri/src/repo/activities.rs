@@ -9,13 +9,12 @@ use crate::capture::ignore::{self, IgnoreRule};
 use crate::capture::WindowInfo;
 use crate::device;
 use crate::error::Result;
-use crate::repo::outbox::{enqueue, OutboxEntity, OutboxOp};
 use crate::storage::{utc_now_rfc3339, DbPool, SqliteResultExt};
 
 /// 创建一条新的会话记录。device_id = self；updated_at = captured_at；
-/// 不写旧版本同步 outbox；活动数据保持在本机数据库。
+/// 活动数据保持在本机数据库。
 /// `excluded`：忽略规则命中时为 true——行照常落库，仅不计入统计
-/// （本机元数据，不进 seal 的 outbox payload，不参与同步）。
+/// （本机元数据，不参与同步）。
 pub async fn insert_new(
     pool: &DbPool,
     info: &WindowInfo,
@@ -73,51 +72,21 @@ pub async fn insert_new(
 }
 
 /// 会话结束（焦点切到别的窗口那一刻）。
-/// 同事务里：把 ended_at 钉死成 final_ended_at，更新 duration_secs / updated_at，并写一条 outbox 推到云端。
+/// 同事务里：把 ended_at 钉死成 final_ended_at，更新 duration_secs / updated_at。
 pub async fn seal_session(pool: &DbPool, id: i64, final_ended_at: DateTime<Local>) -> Result<()> {
     let ended = final_ended_at.to_rfc3339();
     let updated = utc_now_rfc3339();
-    let device_id = device::self_id()?.to_string();
 
     pool.0
         .call(move |conn| {
-            // 取整行做 outbox payload 用
-            // 9 字段元组：rusqlite query_row 的天然形状（每列对应一个）。
-            // 抽 type alias 反而把字段语义信息隐藏到别的文件，可读性更差
-            #[allow(clippy::type_complexity)]
-            let row: Option<(
-                String,
-                String,
-                i64,
-                String,
-                u8,
-                String,
-                Option<String>,
-                String,
-                String,
-            )> = conn
+            let Some(started_at) = conn
                 .query_row(
-                    "SELECT started_at, ended_at, duration_secs, local_date, local_hour,
-                            process_name, window_title, category_id, device_id
-                     FROM activities WHERE id = ?",
+                    "SELECT started_at FROM activities WHERE id = ?",
                     [id],
-                    |r| {
-                        Ok((
-                            r.get(0)?,
-                            r.get(1)?,
-                            r.get(2)?,
-                            r.get(3)?,
-                            r.get(4)?,
-                            r.get(5)?,
-                            r.get(6)?,
-                            r.get(7)?,
-                            r.get(8)?,
-                        ))
-                    },
+                    |r| r.get::<_, String>(0),
                 )
-                .ok();
-
-            let Some((started_at, _, _, local_date, local_hour, process_name, window_title, category_id, this_device)) = row else {
+                .ok()
+            else {
                 // 行不存在：可能是已经被清掉了；忽略
                 return Ok(());
             };
@@ -153,31 +122,6 @@ pub async fn seal_session(pool: &DbPool, id: i64, final_ended_at: DateTime<Local
             )
             .db()?;
 
-            // 只对 local 来源的会话写 outbox：远端拉来的不要再推回去
-            if this_device == device_id {
-                let payload = serde_json::json!({
-                    "deviceId": this_device,
-                    "startedAt": started_at,
-                    "endedAt": ended_final,
-                    "durationSecs": dur,
-                    "localDate": local_date,
-                    "localHour": local_hour,
-                    "processName": process_name,
-                    "windowTitle": window_title,
-                    "categoryId": category_id,
-                    "updatedAt": updated,
-                })
-                .to_string();
-                enqueue(
-                    conn,
-                    OutboxOp::Upsert,
-                    OutboxEntity::Activity,
-                    &id.to_string(),
-                    &payload,
-                )
-                .db()?;
-            }
-
             Ok(())
         })
         .await?;
@@ -188,7 +132,7 @@ pub async fn seal_session(pool: &DbPool, id: i64, final_ended_at: DateTime<Local
 /// 返回改动行数。匹配在 Rust 里做（与采集期 / pull 合并期同源走
 /// [`ignore::is_excluded`]），不用 SQL LIKE——通配符要转义、SQLite `lower()`
 /// 只认 ASCII，两头的大小写语义会分叉，同一行两处判出不同结果。
-/// 只改 excluded 位：不 bump updated_at、不写 outbox——标记是本机元数据，
+/// 只改 excluded 位：不 bump updated_at——标记是本机元数据，
 /// 不参与同步，动了 updated_at 反而会经 LWW 干扰对端。
 pub async fn reapply_ignore_rules(pool: &DbPool, rules: &[IgnoreRule]) -> Result<u64> {
     let rules = rules.to_vec();
@@ -331,69 +275,20 @@ pub async fn delete_screenshots_older_than(pool: &DbPool, retention_days: u32) -
 pub async fn purge_orphan_sessions(pool: &DbPool) -> Result<u64> {
     let device_id = device::self_id()?.to_string();
 
-    // 1. 找出受影响的 local_date 列表（保留旧版本 outbox 的本地兼容行为）
-    let local_dates: Vec<String> = pool
-        .0
-        .call({
-            let device_id = device_id.clone();
-            move |conn| {
-                let mut stmt = conn
-                    .prepare(
-                        "SELECT DISTINCT local_date FROM activities
-                         WHERE device_id = ?1 AND duration_secs = 0 AND ended_at = started_at",
-                    )
-                    .db()?;
-                let rows = stmt
-                    .query_map(rusqlite::params![device_id], |r| r.get::<_, String>(0))
-                    .db()?;
-                let mut out = Vec::new();
-                for r in rows {
-                    out.push(r.db()?);
-                }
-                Ok(out)
-            }
-        })
-        .await?;
-
-    if local_dates.is_empty() {
-        return Ok(0);
-    }
-
-    // 2. DELETE 一刀切 + 给每个受影响的 local_date 写一条 legacy outbox（同一事务）
+    // DELETE 一刀切。
     let deleted = pool
         .0
-        .call({
-            let device_id = device_id.clone();
-            let local_dates = local_dates.clone();
-            move |conn| {
-                let n = conn
-                    .execute(
-                        "DELETE FROM activities
-                         WHERE device_id = ?1 AND duration_secs = 0 AND ended_at = started_at",
-                        rusqlite::params![device_id],
-                    )
-                    .db()? as u64;
-                for date in &local_dates {
-                    let payload = serde_json::json!({ "localDate": date }).to_string();
-                    enqueue(
-                        conn,
-                        OutboxOp::Upsert,
-                        OutboxEntity::Activity,
-                        &device_id,
-                        &payload,
-                    )
-                    .db()?;
-                }
-                Ok(n)
-            }
+        .call(move |conn| {
+            Ok(conn
+                .execute(
+                    "DELETE FROM activities
+                     WHERE device_id = ?1 AND duration_secs = 0 AND ended_at = started_at",
+                    rusqlite::params![device_id],
+                )
+                .db()? as u64)
         })
         .await?;
 
-    log::info!(
-        "启动期清理孤儿 session：删 {} 行，记录 {} 天 legacy outbox",
-        deleted,
-        local_dates.len()
-    );
     Ok(deleted)
 }
 
@@ -422,7 +317,7 @@ mod tests {
     /// - 只删本机 (device_id = self_id) 的孤儿（dur=0 且 ended_at=started_at）
     /// - 不动本机 sealed 行（duration_secs > 0）
     /// - 不跨设备删（其它 device_id 的孤儿要留着）
-    /// - 受影响的每个 local_date 入一条 outbox（让 push 重写当天 ndjson）
+    /// - 只删除本机的孤儿会话
     #[tokio::test]
     async fn purge_orphan_sessions_only_self_keeps_sealed_and_other_devices() {
         let pool = fresh_test_pool().await;
@@ -436,17 +331,9 @@ mod tests {
         assert_eq!(self_total, 2, "本机 sealed 应留 2 行");
         assert_eq!(other_total, 1, "其它设备的 orphan 不该被本机的 purge 动到");
 
-        let dates = outbox_activity_local_dates(&pool).await;
-        assert!(
-            dates.iter().any(|d| d == "2026-05-15"),
-            "受影响的 local_date 应入 outbox（push 重写当天）"
-        );
-
-        // 幂等：再调一次没有可删的行，返回 0、outbox 不再增长
-        let outbox_before = outbox_activity_count(&pool).await;
+        // 幂等：再调一次没有可删的行，返回 0
         let deleted2 = purge_orphan_sessions(&pool).await.unwrap();
         assert_eq!(deleted2, 0);
-        assert_eq!(outbox_activity_count(&pool).await, outbox_before);
     }
 
     /// v26 trigger `activities_local_remote_id`：未指定 remote_id 的 INSERT 应
@@ -524,10 +411,9 @@ mod tests {
         assert_eq!(remote_id.as_deref(), Some("explicit-42"));
     }
 
-    /// 焦点窗口刚切入 ([`insert_new`])：写 activities 行但**不**入 outbox ——
-    /// 心跳级 INSERT 不能每秒一条 push 到 Drive。outbox 只在 seal 时入。
+    /// 焦点窗口刚切入 ([`insert_new`])：写 activities 行。
     #[tokio::test]
-    async fn insert_new_does_not_enqueue_outbox() {
+    async fn insert_new_writes_activity_only() {
         let pool = fresh_test_pool().await;
         let info = WindowInfo {
             app_name: "Code".into(),
@@ -539,12 +425,6 @@ mod tests {
         let _id = insert_new(&pool, &info, captured, None, false, None)
             .await
             .unwrap();
-
-        assert_eq!(
-            outbox_activity_count(&pool).await,
-            0,
-            "insert_new 不该入 outbox（心跳级 push 会把 Drive 吵爆）"
-        );
     }
 
     /// 忽略规则的全表重算：加规则 → 命中行置 1；删规则 → 清回 0。
@@ -665,56 +545,6 @@ mod tests {
             })
             .await
             .unwrap()
-    }
-
-    /// [`seal_session`] 写一条 entity='activity' 的 Upsert outbox，payload 含
-    /// deviceId/startedAt/endedAt/durationSecs/localDate/processName/updatedAt。
-    /// 漏掉这条 push 永远不知道有这段 session，对端永远看不到。
-    #[tokio::test]
-    async fn seal_session_enqueues_outbox_with_full_payload() {
-        let pool = fresh_test_pool().await;
-        let info = WindowInfo {
-            app_name: "Code".into(),
-            title: "main.rs".into(),
-            app_path: None,
-            pid: 0,
-        };
-        let captured = Local::now();
-        let id = insert_new(&pool, &info, captured, None, false, None)
-            .await
-            .unwrap();
-        seal_session(&pool, id, captured + Duration::seconds(30))
-            .await
-            .unwrap();
-
-        assert_eq!(outbox_activity_count(&pool).await, 1);
-
-        let payload = pool
-            .0
-            .call(|conn| {
-                let s: String = conn
-                    .query_row(
-                        "SELECT payload FROM sync_outbox WHERE entity = 'activity' LIMIT 1",
-                        [],
-                        |r| r.get(0),
-                    )
-                    .db()?;
-                Ok(s)
-            })
-            .await
-            .unwrap();
-        let v: serde_json::Value = serde_json::from_str(&payload).unwrap();
-        assert_eq!(
-            v.get("deviceId").and_then(|x| x.as_str()),
-            Some(TEST_SELF_ID)
-        );
-        assert_eq!(v.get("processName").and_then(|x| x.as_str()), Some("Code"));
-        assert!(v.get("startedAt").and_then(|x| x.as_str()).is_some());
-        assert!(v.get("endedAt").and_then(|x| x.as_str()).is_some());
-        // duration_secs 取 ended - started 的整秒值，captured + 30s → 30
-        assert_eq!(v.get("durationSecs").and_then(|x| x.as_i64()), Some(30));
-        assert!(v.get("localDate").and_then(|x| x.as_str()).is_some());
-        assert!(v.get("updatedAt").and_then(|x| x.as_str()).is_some());
     }
 
     /// 测 [`delete_screenshots_older_than`]：只删 `local_date < cutoff`（cutoff =
@@ -1054,44 +884,6 @@ mod tests {
                     )
                     .db()?;
                 Ok((self_total, other_total))
-            })
-            .await
-            .unwrap()
-    }
-
-    async fn outbox_activity_local_dates(pool: &DbPool) -> Vec<String> {
-        pool.0
-            .call(|conn| {
-                let mut stmt = conn
-                    .prepare(
-                        "SELECT json_extract(payload, '$.localDate') FROM sync_outbox
-                         WHERE entity = 'activity'",
-                    )
-                    .db()?;
-                let rows = stmt.query_map([], |r| r.get::<_, Option<String>>(0)).db()?;
-                let mut out = Vec::new();
-                for r in rows {
-                    if let Some(s) = r.db()? {
-                        out.push(s);
-                    }
-                }
-                Ok(out)
-            })
-            .await
-            .unwrap()
-    }
-
-    async fn outbox_activity_count(pool: &DbPool) -> i64 {
-        pool.0
-            .call(|conn| {
-                let n: i64 = conn
-                    .query_row(
-                        "SELECT COUNT(*) FROM sync_outbox WHERE entity = 'activity'",
-                        [],
-                        |r| r.get(0),
-                    )
-                    .db()?;
-                Ok(n)
             })
             .await
             .unwrap()

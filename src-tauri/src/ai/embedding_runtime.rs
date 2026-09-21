@@ -77,7 +77,7 @@ pub fn init_dylib_path() {
     let path = match dylib_path() {
         Ok(p) => p,
         Err(e) => {
-            log::warn!("init_dylib_path: 算 dylib 路径失败: {e}");
+            log::warn!("init_dylib_path: failed to compute dylib path: {e}");
             return;
         }
     };
@@ -86,7 +86,7 @@ pub fn init_dylib_path() {
         log::info!("ORT_DYLIB_PATH = {}", path.display());
     } else {
         log::info!(
-            "onnxruntime 未安装（{}）；首次使用 OCR 时会引导下载",
+            "onnxruntime not installed ({}); will prompt download on first OCR use",
             path.display()
         );
     }
@@ -160,7 +160,7 @@ where
         // ── 校验（可选，v1 跟 binary.rs 一致跳过）───
         progress(DownloadPhase::Verifying, done_bytes, grand_total);
         log::info!(
-            "onnxruntime 组件 sha256 未录入（version={PINNED_VERSION} dest={}），跳过校验",
+            "onnxruntime component sha256 not recorded (version={PINNED_VERSION} dest={}), skipping verification",
             a.dest
         );
 

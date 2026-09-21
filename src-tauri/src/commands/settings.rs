@@ -79,7 +79,7 @@ pub async fn update_settings(
             mgr.disable()
         };
         if let Err(e) = res {
-            log::warn!("切换开机自启失败: {e}");
+            log::warn!("Failed to toggle auto-start: {e}");
         }
     }
 

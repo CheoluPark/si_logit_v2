@@ -16,7 +16,7 @@ use tauri::{Emitter, State};
 
 use super::screen_memory::MemoryState;
 use crate::ai::server::EngineSupervisor;
-use crate::chat::engine::{self, ChatAnswer};
+use crate::chat::engine::{self, ChatAnswer, HistoryTurn};
 use crate::chat::llm::ChatLlm;
 use crate::chat::store::{self, ConversationMeta, StoredMessage};
 use crate::chat::tools::ToolCtx;
@@ -100,7 +100,7 @@ impl Drop for InflightGuard<'_> {
             ok: self.ok,
         };
         if let Err(e) = self.app.emit(CHAT_ANSWER_READY_EVENT, payload) {
-            log::warn!("广播 answer-ready 失败: {e}");
+            log::warn!("Failed to broadcast answer-ready: {e}");
         }
     }
 }
@@ -122,6 +122,16 @@ fn require(mem: &MemoryState) -> Result<&MemoryDb, String> {
         .ok_or_else(|| "屏幕记忆库不可用(启动时打开失败,详见日志)".to_string())
 }
 
+fn deterministic_preset_id<'a>(
+    preset_id: Option<&'a str>,
+    history: &[HistoryTurn],
+) -> Option<&'a str> {
+    history
+        .is_empty()
+        .then(|| preset_id.filter(|id| engine::is_known_preset(id)))
+        .flatten()
+}
+
 /// 一次问答。`conversation_id` 为 None = 首条消息,隐式建会话(标题=首问截断)。
 /// `ask_id` 由前端生成,是本次问答的取消句柄(首问时前端还不知道会话 id)。
 // Tauri 命令的参数 = 注入的 State 们 + IPC 实参,拆参数结构体不合命令惯例
@@ -138,6 +148,7 @@ pub async fn chat_ask(
     locale: Option<String>,
     ask_id: Option<String>,
     parent_guid: Option<String>,
+    preset_id: Option<String>,
 ) -> Result<ChatAskResult, String> {
     let question = question.trim().to_string();
     if question.is_empty() {
@@ -179,6 +190,7 @@ pub async fn chat_ask(
         },
         lang,
         ask_id,
+        preset_id,
     )
     .await
 }
@@ -214,6 +226,7 @@ pub async fn chat_regenerate(
         AskInput::Regenerate { leaf: leaf_guid },
         lang,
         ask_id,
+        None,
     )
     .await
 }
@@ -245,6 +258,7 @@ async fn run_ask(
     input: AskInput,
     lang: crate::chat::lang::ChatLang,
     ask_id: String,
+    preset_id: Option<String>,
 ) -> Result<ChatAskResult, String> {
     // 注册 in-flight:同会话已有生成中的问答 → 明确报忙(本地引擎单槽,
     // 放进去也只是静默排队装死)。注册成功后由 guard 负责摘除 + 广播。
@@ -293,6 +307,36 @@ async fn run_ask(
                 .ok_or_else(|| lang.err_nothing_to_regenerate().to_string())?
         }
     };
+
+    let today = chrono::Local::now().date_naive();
+    if let Some(preset_id) = deterministic_preset_id(preset_id.as_deref(), &history) {
+        let ctx = ToolCtx::open_readonly().await.map_err(String::from)?;
+        if let Some(answer) = engine::answer_preset(preset_id, &ctx, today, lang).await {
+            let answer = answer.map_err(String::from)?;
+            store::append_assistant(
+                db,
+                conv_id,
+                &answer.text,
+                &answer.citations,
+                answer.degraded,
+                store::MsgUsage {
+                    prompt: answer.prompt_tokens,
+                    completion: answer.completion_tokens,
+                    reasoning: answer.reasoning_tokens,
+                    elapsed_ms: answer.elapsed_ms,
+                },
+                Some(&answer_parent),
+            )
+            .await
+            .map_err(String::from)?;
+            guard.ok = true;
+            return Ok(ChatAskResult {
+                conversation_id: conv_id,
+                cancelled: false,
+                answer,
+            });
+        }
+    }
 
     let cfg = settings::load(pool).await.map_err(String::from)?;
     let ai = &cfg.ai;
@@ -370,13 +414,12 @@ async fn run_ask(
     };
 
     let ctx = ToolCtx::open_readonly().await.map_err(String::from)?;
-    let today = chrono::Local::now().date_naive();
     // 生成可被"停止"打断:cancel 分支丢弃生成 future——reqwest 连接随之断开,
     // llama-server 对断连会中止解码;云端同理。提问已落库,什么都不补写,
     // 会话呈"有问无答"可重问;guard 广播 ok=false 让各处视图清掉打字指示。
     let answer = tokio::select! {
         _ = &mut cancel_rx => {
-            log::info!("问答被用户停止(会话 {conv_id})");
+            log::info!("Q&A stopped by user (conversation {conv_id})");
             return Ok(ChatAskResult {
                 conversation_id: conv_id,
                 cancelled: true,
@@ -553,5 +596,23 @@ mod overrides_tests {
         summary_left.batch_size = Some(4096);
         summary_left.parallel_slots = Some(4);
         assert!(engine_ctx_sufficient(&summary_left, &ov(None)));
+    }
+}
+
+#[cfg(test)]
+mod preset_route_tests {
+    use super::{deterministic_preset_id, HistoryTurn};
+
+    #[test]
+    fn only_known_presets_on_empty_history_take_deterministic_route() {
+        assert_eq!(deterministic_preset_id(Some("today"), &[]), Some("today"));
+        assert_eq!(deterministic_preset_id(None, &[]), None);
+        assert_eq!(deterministic_preset_id(Some("not-a-preset"), &[]), None);
+
+        let history = vec![HistoryTurn {
+            role: "user".into(),
+            content: "지난 질문".into(),
+        }];
+        assert_eq!(deterministic_preset_id(Some("today"), &history), None);
     }
 }

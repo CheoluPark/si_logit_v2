@@ -10,7 +10,7 @@ pub async fn start_capture(svc: State<'_, Arc<CaptureService>>) -> Result<(), St
     Ok(())
 }
 
-/// 停止焦点采集后台循环 + seal 当前会话写入 outbox。
+/// 停止焦点采集后台循环 + seal 当前会话。
 #[tauri::command]
 pub async fn stop_capture(svc: State<'_, Arc<CaptureService>>) -> Result<(), String> {
     svc.stop().await;

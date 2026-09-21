@@ -268,7 +268,7 @@ impl OcrSupervisor {
                     // drop(link) → kill_on_drop 兜底 shutdown 没被理会的情况
                 }
             }
-            Err(_) => log::debug!("OCR worker 停止:有请求在飞,交给 EOF 兜底"),
+            Err(_) => log::debug!("OCR worker stop: requests in flight, leaving EOF fallback"),
         }
     }
 
@@ -280,7 +280,7 @@ impl OcrSupervisor {
     /// did_finish_launching,不可展开)。布线错误靠 error 日志暴露。
     pub fn spawn_idle_watcher(self: &Arc<Self>) -> Option<tokio::task::JoinHandle<()>> {
         let Ok(rt) = tokio::runtime::Handle::try_current() else {
-            log::error!("OCR 空闲回收器未启动:不在 tokio 运行时上下文(启动布线错误)");
+            log::error!("OCR idle reclaimer not started: not in tokio runtime context (startup wiring error)");
             return None;
         };
         let weak = Arc::downgrade(self);
@@ -299,7 +299,7 @@ impl OcrSupervisor {
                     Err(_) => false, // 在忙:跳过本轮,绝不排队等一个 90s 的挂帧
                 };
                 if reclaimed {
-                    log::info!("OCR worker 空闲 {}s,回收进程", idle_ms / 1000);
+                    log::info!("OCR worker idle {}s, reclaiming process", idle_ms / 1000);
                 }
             }
         }))
@@ -339,7 +339,7 @@ impl OcrSupervisor {
         // dirty = 上一个请求的 future 在"已写未读"之间被丢弃,管道里躺着
         // 无人认领的应答——这条链不能再用,弃之重建
         if inner.link.as_ref().is_some_and(|l| l.dirty) {
-            log::warn!("OCR worker 链接残留在飞请求(调用方被取消),弃链重建");
+            log::warn!("OCR worker link has stale in-flight request (caller was cancelled), dropping link and rebuilding");
             inner.link = None;
         }
         let want_fast = self.fast.load(Ordering::Relaxed);
@@ -348,7 +348,7 @@ impl OcrSupervisor {
         }
         inner.link = None;
         let n = self.spawns.fetch_add(1, Ordering::Relaxed) + 1;
-        log::info!("拉起 OCR worker(第 {n} 次,fast={want_fast})");
+        log::info!("spawning OCR worker (attempt #{n}, fast={want_fast})");
         let mut link = (self.spawn)(want_fast, Arc::clone(&self.logs))?;
 
         // ready 握手:跳过垃圾行,等 ready 或 fatal
@@ -361,7 +361,10 @@ impl OcrSupervisor {
                     return Err(Error::OcrInfra("worker 握手前退出".into()));
                 }
                 let Ok(msg) = serde_json::from_str::<WireMsg>(buf.trim_end()) else {
-                    log::debug!("worker 握手期非协议输出,跳过: {}", buf.trim_end());
+                    log::debug!(
+                        "worker handshake non-protocol output, skipping: {}",
+                        buf.trim_end()
+                    );
                     continue;
                 };
                 match msg.classify() {
@@ -372,7 +375,7 @@ impl OcrSupervisor {
                                 msg.v
                             )));
                         }
-                        log::info!("OCR worker 就绪 backend={backend} pid={pid}");
+                        log::info!("OCR worker ready backend={backend} pid={pid}");
                         return Ok(());
                     }
                     MsgKind::Fatal { code, msg } => {
@@ -434,7 +437,7 @@ async fn read_result(link: &mut Link, expect_id: u64) -> Result<WireOutcome> {
         }
         let Ok(msg) = serde_json::from_str::<WireMsg>(buf.trim_end()) else {
             // ORT/CoreML 等原生库可能污染 stdout:跳过,绝不因此判请求失败
-            log::debug!("worker 非协议输出,跳过: {}", buf.trim_end());
+            log::debug!("worker non-protocol output, skipping: {}", buf.trim_end());
             continue;
         };
         match msg.classify() {
@@ -508,7 +511,7 @@ fn spawn_process(fast: bool, logs: Arc<LogRing>) -> Result<Link> {
     #[cfg(target_os = "windows")]
     cmd.creation_flags(0x0800_0000); // CREATE_NO_WINDOW
     if let Err(e) = crate::ai::job_guard::prepare_command(&mut cmd) {
-        log::warn!("OCR worker 进程保护配置失败(不阻断): {e}");
+        log::warn!("OCR worker process protection config failed (non-blocking): {e}");
     }
 
     let mut child = cmd

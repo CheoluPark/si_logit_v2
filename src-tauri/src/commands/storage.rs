@@ -64,7 +64,7 @@ pub async fn get_storage_info(pool: State<'_, DbPool>) -> Result<StorageInfo, St
 /// - `ai_summaries` —— step 2 段总结
 /// - `screenshot_embeddings` —— MobileNet dedup 缓存
 /// - `sync_outbox` / `sync_cursor` —— 保留并清理旧版本同步状态表，避免旧数据残留
-/// - `app_group_members` / `app_groups` —— **软删**（带 outbox enqueue）：清空 activities 后
+/// - `app_group_members` / `app_groups` —— **软删**：清空 activities 后
 ///   每个 member 的 process_name 都失去对应活动，每个 group 也再无 active 成员，即变成
 ///   Apps 页显示但 icon / 数据全无的 "phantom" 行（list_groups 不过滤活动存在性）。
 ///   用户点"清空所有活动"的意图就是一切归零。
@@ -94,7 +94,7 @@ pub async fn purge_activities(
 /// 抽出来的实际实现，给单测可以直接调用（绕开 Tauri State<> 包装 + CaptureService
 /// 在 test 里构造不便）。语义见 [`purge_activities`] doc。
 pub(crate) async fn purge_activities_impl(pool: &DbPool) -> Result<(), String> {
-    // Phase 1: 7 张 DELETE + cursor reset + 软删 phantom app_groups/members + outbox
+    // Phase 1: 7 张 DELETE + cursor reset + 软删 phantom app_groups/members
     pool.0
         .call(|conn| {
             // ── 派生数据全清 + cursor reset ──
@@ -116,27 +116,13 @@ pub(crate) async fn purge_activities_impl(pool: &DbPool) -> Result<(), String> {
             //
             // activities 已清空：每个 member 的 process_name 在 activities 里都找不到，
             // 每个 group 也再无 active 成员。这些 phantom 行让 Apps 页显示空数据死行，
-            // 跨设备同步还会从对端反复复活。同步软删 + outbox 让对端收敛。
+            // 保留 tombstone，避免本机再次捕获时丢失用户的分组状态。
             //
             // 顺序：先成员后组（组的 phantom 判定要看 member 的 deleted_at 状态）。
-            // 整个 conn.call 块共享同一 SQLite 连接，UPDATE/SELECT/outbox.enqueue 都在
-            // 一致视图上。
+            // 整个 conn.call 块共享同一 SQLite 连接，UPDATE/SELECT 都在一致视图上。
             let now = utc_now_rfc3339();
 
-            // Step A: 快照所有 active member PK → 软删 → 逐个 outbox enqueue
-            let member_pks: Vec<String> = {
-                let mut stmt = conn
-                    .prepare("SELECT process_name FROM app_group_members WHERE deleted_at IS NULL")
-                    .map_err(|e| tokio_rusqlite::Error::Other(Box::new(e)))?;
-                let rows = stmt
-                    .query_map([], |r| r.get::<_, String>(0))
-                    .map_err(|e| tokio_rusqlite::Error::Other(Box::new(e)))?;
-                let mut out = Vec::new();
-                for r in rows {
-                    out.push(r.map_err(|e| tokio_rusqlite::Error::Other(Box::new(e)))?);
-                }
-                out
-            };
+            // Step A: soft-delete all active members.
             conn.execute(
                 "UPDATE app_group_members
                     SET deleted_at = ?1, updated_at = ?1
@@ -144,40 +130,7 @@ pub(crate) async fn purge_activities_impl(pool: &DbPool) -> Result<(), String> {
                 rusqlite::params![now],
             )
             .map_err(|e| tokio_rusqlite::Error::Other(Box::new(e)))?;
-            for pk in &member_pks {
-                let payload = serde_json::json!({ "processName": pk }).to_string();
-                crate::repo::outbox::enqueue(
-                    conn,
-                    crate::repo::outbox::OutboxOp::Upsert,
-                    crate::repo::outbox::OutboxEntity::AppGroupMember,
-                    pk,
-                    &payload,
-                )
-                .map_err(|e| tokio_rusqlite::Error::Other(Box::new(e)))?;
-            }
-
-            // Step B: 快照"现已 phantom"（无 active 成员）的 group PK → 软删 → outbox
-            let group_pks: Vec<String> = {
-                let mut stmt = conn
-                    .prepare(
-                        "SELECT id FROM app_groups
-                         WHERE deleted_at IS NULL
-                           AND NOT EXISTS (
-                             SELECT 1 FROM app_group_members m
-                              WHERE m.group_id = app_groups.id
-                                AND m.deleted_at IS NULL
-                           )",
-                    )
-                    .map_err(|e| tokio_rusqlite::Error::Other(Box::new(e)))?;
-                let rows = stmt
-                    .query_map([], |r| r.get::<_, String>(0))
-                    .map_err(|e| tokio_rusqlite::Error::Other(Box::new(e)))?;
-                let mut out = Vec::new();
-                for r in rows {
-                    out.push(r.map_err(|e| tokio_rusqlite::Error::Other(Box::new(e)))?);
-                }
-                out
-            };
+            // Step B: soft-delete groups with no active members.
             conn.execute(
                 "UPDATE app_groups
                     SET deleted_at = ?1, updated_at = ?1
@@ -190,18 +143,6 @@ pub(crate) async fn purge_activities_impl(pool: &DbPool) -> Result<(), String> {
                 rusqlite::params![now],
             )
             .map_err(|e| tokio_rusqlite::Error::Other(Box::new(e)))?;
-            for pk in &group_pks {
-                let payload = serde_json::json!({ "id": pk }).to_string();
-                crate::repo::outbox::enqueue(
-                    conn,
-                    crate::repo::outbox::OutboxOp::Upsert,
-                    crate::repo::outbox::OutboxEntity::AppGroup,
-                    pk,
-                    &payload,
-                )
-                .map_err(|e| tokio_rusqlite::Error::Other(Box::new(e)))?;
-            }
-
             Ok(())
         })
         .await
@@ -314,7 +255,7 @@ pub async fn purge_screenshots(pool: State<'_, DbPool>) -> Result<(), String> {
                 std::fs::remove_file(&path)
             };
             if let Err(e) = res {
-                log::warn!("删除截图失败 {}: {}", path.display(), e);
+                log::warn!("Failed to delete screenshot {}: {}", path.display(), e);
             }
         }
         Ok(())
@@ -457,14 +398,6 @@ mod tests {
                          VALUES('/p.jpg','mobilenet_v3',1280, ?1)",
                         rusqlite::params![vec![0u8; 1280 * 4]],
                     )?;
-                    // sync_outbox
-                    conn.execute(
-                        "INSERT INTO sync_outbox(op, entity, entity_pk, payload,
-                            created_at, attempts, next_retry_at)
-                         VALUES('upsert','activity','1','{}','2026-05-17T10:00:00Z',0,
-                                '2026-05-17T10:00:00Z')",
-                        [],
-                    )?;
                     // sync_cursor 写一个非 epoch 的 cursor 验证被重置
                     conn.execute(
                         "INSERT OR REPLACE INTO sync_cursor(entity, last_pulled_at)
@@ -479,8 +412,7 @@ mod tests {
 
         // 自定义数据：fresh_test_pool 已经 seed 了 builtin categories；额外加一个
         // app_groups + app_group_member 模拟用户已用过的组。purge 后这条 group
-        // 会变 phantom（活动清空 → member 无活动 → group 无 active 成员）→ 软删，
-        // 同时给 sync_outbox 入队让对端收敛。
+        // 会变 phantom（活动清空 → member 无活动 → group 无 active 成员）→ 软删。
         pool.0
             .call(|conn| {
                 conn.execute(
@@ -513,8 +445,7 @@ mod tests {
         // ── act ──
         purge_activities_impl(&pool).await.unwrap();
 
-        // ── assert: 6 张硬删表全空（sync_outbox 单独看：被清后又被 phantom 软删
-        //    enqueue 入队，所以不再为 0） ──
+        // ── assert: 6 张硬删表全空 ──
         for table in [
             "activities",
             "process_paths",
@@ -575,35 +506,6 @@ mod tests {
         assert_eq!(active_groups, 0, "phantom app_groups 应已全部软删");
         assert_eq!(active_members, 0, "phantom app_group_members 应已全部软删");
 
-        // ── assert: sync_outbox 含两条软删 enqueue（1 个 group + 1 个 member） ──
-        let outbox_entities: Vec<(String, String, String)> = pool
-            .0
-            .call(|conn| {
-                let mut stmt = conn.prepare(
-                    "SELECT op, entity, entity_pk FROM sync_outbox ORDER BY entity, entity_pk",
-                )?;
-                let rows = stmt
-                    .query_map([], |r| {
-                        Ok((
-                            r.get::<_, String>(0)?,
-                            r.get::<_, String>(1)?,
-                            r.get::<_, String>(2)?,
-                        ))
-                    })?
-                    .collect::<rusqlite::Result<Vec<_>>>()?;
-                Ok(rows)
-            })
-            .await
-            .unwrap();
-        assert_eq!(
-            outbox_entities,
-            vec![
-                ("upsert".into(), "app_group".into(), "UserGroup".into()),
-                ("upsert".into(), "app_group_member".into(), "TestApp".into()),
-            ],
-            "sync_outbox 应仅含 phantom 软删的 outbox 行",
-        );
-
         // ── assert: sync_cursor 重置到 epoch ──
         let cursor: String = pool
             .0
@@ -629,7 +531,6 @@ mod tests {
         );
 
         // ── 幂等 ──：再跑一次不出错；6 张表仍为空；
-        //    sync_outbox 这次回到 0（无 active phantom 可软删，无 enqueue）
         purge_activities_impl(&pool).await.unwrap();
         for table in [
             "activities",
@@ -638,7 +539,6 @@ mod tests {
             "ai_image_descriptions",
             "ai_summaries",
             "screenshot_embeddings",
-            "sync_outbox",
         ] {
             assert_eq!(count(&pool, table).await, 0, "二次 purge 后 {table} 应为 0");
         }

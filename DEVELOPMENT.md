@@ -48,8 +48,7 @@ impl Default for AiConfig {
 ```
 
 - AI 설정(엔드포인트, 모델, API 키, 모델 경로, Jira MCP 등)의 기본값이 여기 정의되어 있습니다.
-- **Jira MCP 설정 구조체**: `JiraMcpConfig` (약 58행) — `url`, `pat`, `transport` 필드.
-  - `transport` 기본값은 `"remote"` (현재 `"remote"`만 지원).
+- **Jira MCP 설정 구조체**: `JiraMcpConfig` (약 58행) — `url`, `pat` 필드.
 - 참고: `sanitize()` 함수(같은 파일)가 AI 설정 값 검증/정리를 담당합니다.
 
 ## 3. Jira Work Item 가져오기 코드 위치
@@ -59,7 +58,6 @@ impl Default for AiConfig {
 | 함수 | 상태 | 역할 |
 |------|------|------|
 | `fetch_work_items` | **구현 완료** (MCP streamable HTTP) | Jira에서 현재 사용자의 활성 Work Item 목록 가져오기 (`searchJiraIssues`) |
-| `register_work_log` | **PLACEHOLDER** | Jira에 워크로그 등록 |
 
 ### 구현 시 참고사항
 
@@ -67,7 +65,7 @@ impl Default for AiConfig {
 
    ```rust
    let cfg = crate::repo::settings::load(&pool).await?;
-   let jira = &cfg.ai.jira_mcp;   // url, pat, transport
+   let jira = &cfg.ai.jira_mcp;   // url, pat
    ```
 
    - `JiraMcpConfig` 구조체: `src-tauri/src/ai/config.rs` (58행)
@@ -80,10 +78,9 @@ impl Default for AiConfig {
    - 커스텀 필드: `customfield_13548`(작업 배경), `customfield_13549`(필요 정보),
      `customfield_13550`(작업 목표), `customfield_13551`(산출물)
    - JSON / SSE(`text/event-stream`) 응답 모두 처리, `Mcp-Session-Id` 헤더 처리
-   - `register_work_log`는 아직 PLACEHOLDER — 회사 MCP 서버의 실제 워크로그 등록 툴 확인 후 교체 필요
 
 3. **프런트엔드 연결** (변경 불필요, 이미 배선됨):
-   - `src/api/hindsight.ts` — `fetchWorkItems()` (1189행), `registerWorkLog()` (1191행)
+   - `src/api/hindsight.ts` — `fetchWorkItems()`
    - `src/pages/WorkLog/WorkLogPage.tsx` — 호출부 (135행, 183행)
 
 4. **배포 시 기본값 오버라이드**: exe 옆에 `preset.json`(부분 Settings JSON, camelCase)을 두면

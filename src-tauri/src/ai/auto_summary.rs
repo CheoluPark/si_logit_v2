@@ -40,7 +40,7 @@ pub fn spawn(app: AppHandle) {
         let mut attempted: HashSet<String> = HashSet::new();
         loop {
             if let Err(e) = check_once(&app, &mut attempted).await {
-                log::debug!("自动总结本轮跳过: {e}");
+                log::debug!("auto-summary: skipping this round: {e}");
             }
             let gap = next_gap_secs(&app).await;
             tokio::time::sleep(std::time::Duration::from_secs(gap)).await;
@@ -90,7 +90,7 @@ async fn check_once(app: &AppHandle, attempted: &mut HashSet<String>) -> Result<
     }
     // AI 未配置(既无云端也没选本地模型)时静默跳过——开关先于配置打开是合法状态
     if !cfg.ai.summary_use_cloud() && cfg.ai.effective_summary_main().trim().is_empty() {
-        log::debug!("自动总结:AI 未配置,跳过");
+        log::debug!("auto-summary: AI not configured, skipping");
         return Ok(());
     }
 
@@ -102,7 +102,10 @@ async fn check_once(app: &AppHandle, attempted: &mut HashSet<String>) -> Result<
     // 定时模式:任一时间点到点即放行本轮;全部未到则整体跳过。
     // 未配置任何点 = 尽快模式(旧行为:只补前一天,不动进行中的今天)。
     if !times.is_empty() && !any_point_due(now.time(), &times) {
-        log::debug!("自动总结:未到任何设定时间({}),本轮跳过", times.join("/"));
+        log::debug!(
+            "auto-summary: no scheduled time reached ({}), skipping this round",
+            times.join("/")
+        );
         return Ok(());
     }
 
@@ -120,7 +123,9 @@ async fn check_once(app: &AppHandle, attempted: &mut HashSet<String>) -> Result<
             RunOutcome::Ran => {
                 attempted.insert(d_key);
             }
-            RunOutcome::Busy => log::debug!("自动总结:手动任务进行中,日报让路"),
+            RunOutcome::Busy => {
+                log::debug!("auto-summary: manual task running, daily report yielding")
+            }
         }
     }
 
@@ -151,7 +156,7 @@ async fn check_once(app: &AppHandle, attempted: &mut HashSet<String>) -> Result<
                     attempted.insert(key);
                 }
                 RunOutcome::Busy => {
-                    log::debug!("自动总结:手动任务进行中,日报让路");
+                    log::debug!("auto-summary: manual task running, daily report yielding");
                     break;
                 }
             }
@@ -172,7 +177,9 @@ async fn check_once(app: &AppHandle, attempted: &mut HashSet<String>) -> Result<
                 RunOutcome::Ran => {
                     attempted.insert(w_key);
                 }
-                RunOutcome::Busy => log::debug!("自动总结:手动任务进行中,周报让路"),
+                RunOutcome::Busy => {
+                    log::debug!("auto-summary: manual task running, weekly report yielding")
+                }
             }
         }
     }
@@ -191,7 +198,7 @@ async fn try_run_daily(app: &AppHandle, date: NaiveDate, force_refresh: bool) ->
     let Ok(_guard) = run_lock.0.try_lock() else {
         return RunOutcome::Busy;
     };
-    log::info!("自动总结:生成 {date} 日报");
+    log::info!("auto-summary: generating daily report for {date}");
     let cancel = app.state::<SummaryCancel>();
     cancel.0.store(false, Ordering::Relaxed);
     // 与手动路径同款:先清 OCR 积压(前端若开着总结页,同样能看到阶段进度)
@@ -218,7 +225,9 @@ async fn try_run_daily(app: &AppHandle, date: NaiveDate, force_refresh: bool) ->
         .run("daily", date, DeviceFilter::All, force_refresh, None)
         .await
     {
-        log::warn!("自动总结:{date} 日报失败(本次运行期不再自动重试): {e}");
+        log::warn!(
+            "auto-summary: daily report for {date} failed (no more auto-retry this run): {e}"
+        );
     }
     RunOutcome::Ran
 }
@@ -228,7 +237,7 @@ async fn try_run_weekly(app: &AppHandle, monday: NaiveDate, allow_missing: bool)
     let Ok(_guard) = run_lock.0.try_lock() else {
         return RunOutcome::Busy;
     };
-    log::info!("自动总结:生成 {monday} 起始周的周报(缺日容忍={allow_missing})");
+    log::info!("auto-summary: generating weekly report starting {monday} (missing-day tolerance={allow_missing})");
     let cancel = app.state::<SummaryCancel>();
     cancel.0.store(false, Ordering::Relaxed);
     let mem = app.state::<crate::commands::screen_memory::MemoryState>();
@@ -251,7 +260,9 @@ async fn try_run_weekly(app: &AppHandle, monday: NaiveDate, allow_missing: bool)
         Arc::clone(&cancel.0),
     );
     if let Err(e) = runner.run(monday, false, allow_missing).await {
-        log::warn!("自动总结:{monday} 周报失败(本次运行期不再自动重试): {e}");
+        log::warn!(
+            "auto-summary: weekly report for {monday} failed (no more auto-retry this run): {e}"
+        );
     }
     RunOutcome::Ran
 }

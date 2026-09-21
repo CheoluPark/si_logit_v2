@@ -85,9 +85,7 @@ pub async fn test_ai_endpoint(
         Ok(p) => p,
         // 带原因链：外层 Display 只说"解码失败"，连接被掐还是 JSON 格式错
         // 全在 source 链里，测试端点正是给用户排障用的
-        Err(e) => {
-            return Ok(fail("parse", &crate::ai::llm::error_chain(&e)))
-        }
+        Err(e) => return Ok(fail("parse", &crate::ai::llm::error_chain(&e))),
     };
 
     // 500:够住 OpenRouter 这类聚合站的全目录;"拉取模型"下拉与测试
@@ -135,7 +133,7 @@ pub(crate) fn fmt_send_err(e: reqwest::Error) -> String {
 }
 
 /// 把 reqwest 发送错误映射为 (err_code, detail) 二元组，
-/// 供 test_ai_endpoint / test_ai_chat 使用。
+/// 供 test_ai_endpoint 使用。
 fn classify_send_err(e: reqwest::Error) -> (&'static str, String) {
     let code = if e.is_timeout() {
         "timeout"
@@ -156,69 +154,4 @@ fn fail(code: &str, detail: &str) -> TestAiEndpointResp {
         message: detail.to_string(),
         err_code: Some(code.to_string()),
     }
-}
-
-/// 1×1 透明 PNG 的 data URL——`test_ai_chat(with_image=true)` 用它验证模型
-/// 真的接受图片输入（纯文本模型会 4xx），比只看 /models 列表可靠。
-const TINY_PNG_DATA_URL: &str = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==";
-
-/// 测试模型是否真实可用：`POST {endpoint}/chat/completions` 发一次最小请求
-/// （max_tokens=1）。模型 ID 拼错（如 deepseek-v4-flash 写成 ...flash1）会被
-/// 服务端 4xx 当场报出来；`with_image=true` 时消息附一张 1×1 PNG，同时验证
-/// 多模态能力。返回复用 [`TestAiEndpointResp`]（models 恒空）。
-#[tauri::command]
-pub async fn test_ai_chat(
-    endpoint: String,
-    api_key: Option<String>,
-    model: String,
-    with_image: bool,
-) -> Result<TestAiEndpointResp, String> {
-    let trimmed = endpoint.trim().trim_end_matches('/');
-    if trimmed.is_empty() || model.trim().is_empty() {
-        return Ok(fail("emptyChat", ""));
-    }
-    let url = format!("{}/chat/completions", trimmed);
-
-    let content = if with_image {
-        serde_json::json!([
-            { "type": "text", "text": "hi" },
-            { "type": "image_url", "image_url": { "url": TINY_PNG_DATA_URL } }
-        ])
-    } else {
-        serde_json::json!("hi")
-    };
-    let body = serde_json::json!({
-        "model": model.trim(),
-        "messages": [{ "role": "user", "content": content }],
-        "max_tokens": 1,
-    });
-
-    // chat 比 /models 慢得多（要真跑一次前向），超时放宽到 30s
-    let client = match Client::builder().timeout(Duration::from_secs(30)).build() {
-        Ok(c) => c,
-        Err(e) => return Ok(fail("clientBuild", &e.to_string())),
-    };
-    let mut req = client.post(&url).json(&body);
-    if let Some(k) = api_key.as_ref().map(|s| s.trim()).filter(|s| !s.is_empty()) {
-        req = req.bearer_auth(k);
-    }
-    let resp = match req.send().await {
-        Ok(r) => r,
-        Err(e) => {
-            let (code, detail) = classify_send_err(e);
-            return Ok(fail(code, &detail));
-        }
-    };
-    let status = resp.status();
-    if !status.is_success() {
-        let body = resp.text().await.unwrap_or_default();
-        let preview: String = body.chars().take(200).collect();
-        return Ok(fail("httpStatus", &format!("{status}：{preview}")));
-    }
-    Ok(TestAiEndpointResp {
-        ok: true,
-        models: Vec::new(),
-        message: String::new(),
-        err_code: None,
-    })
 }

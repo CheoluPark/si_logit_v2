@@ -78,7 +78,7 @@ pub fn is_running() -> bool {
 /// 常驻 tick、定时补识别、总结前补识别全部被 `is_running()` 挡在门外,
 /// 而 `ocr_catchup` 会每秒空转一次直到天荒地老,日报再也生成不出来。
 /// 只有重启才能恢复。
-struct BatchGuard;
+pub(crate) struct BatchGuard;
 
 impl BatchGuard {
     /// 抢占批次;已有批在跑时返回 `None`。
@@ -102,6 +102,13 @@ impl Drop for BatchGuard {
         STOP_REQUESTED.store(false, Ordering::SeqCst);
         RUNNING.store(false, Ordering::SeqCst);
     }
+}
+
+/// Compaction and OCR digest share the same memory-session maintenance lock.
+/// A compaction pass holds it while querying and deleting sessions, so Folder
+/// cannot append lines concurrently with source deletion.
+pub(crate) fn acquire_maintenance() -> Option<BatchGuard> {
+    BatchGuard::acquire()
 }
 
 /// 请求停止当前正在进行的消化批(手动批或常驻批的当前轮)。翻标志即返回;

@@ -3,14 +3,16 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 // hindsight.ts 顶层 import @tauri-apps/api/core;node 环境没有 Tauri IPC,
 // 桩掉 invoke(本文件只测 dtoToDaySummary 纯函数,不触发任何命令调用)。
 vi.mock("@tauri-apps/api/core", () => ({
-  invoke: () => Promise.resolve(null),
+  invoke: vi.fn(() => Promise.resolve(null)),
 }));
 
-import { dtoToDaySummary, type HourSegment } from "./hindsight";
+import { invoke } from "@tauri-apps/api/core";
+import { api, dtoToDaySummary, type HourSegment } from "./hindsight";
 
 describe("dtoToDaySummary", () => {
   afterEach(() => {
     vi.restoreAllMocks();
+    vi.clearAllMocks();
   });
 
   it("合法 YYYY-MM-DD 往返:解析成本地时区当日零点", () => {
@@ -60,5 +62,30 @@ describe("dtoToDaySummary", () => {
     expect(out.date.getFullYear()).toBe(2025);
     expect(out.date.getMonth()).toBe(0);
     expect(out.date.getDate()).toBe(5);
+  });
+});
+
+describe("api.chatAsk", () => {
+  afterEach(() => vi.clearAllMocks());
+
+  it("passes a preset ID to the Tauri payload", () => {
+    void api.chatAsk("What did I do today?", null, "en", "ask-1", undefined, "today");
+
+    expect(invoke).toHaveBeenCalledWith("chat_ask", {
+      question: "What did I do today?",
+      conversationId: null,
+      locale: "en",
+      askId: "ask-1",
+      parentGuid: undefined,
+      presetId: "today",
+    });
+  });
+
+  it("keeps ordinary requests without a preset ID", () => {
+    void api.chatAsk("A custom question", null);
+
+    expect(invoke).toHaveBeenCalledWith("chat_ask", expect.objectContaining({
+      presetId: undefined,
+    }));
   });
 });

@@ -74,14 +74,14 @@ pub(crate) fn onnx_session_from_file(
         match dml {
             Ok(sess) => {
                 log::info!(
-                    "ONNX 会话加载:DirectML GPU({})",
+                    "ONNX session loaded: DirectML GPU ({})",
                     path.file_name().unwrap_or_default().to_string_lossy()
                 );
                 return Ok((sess, true));
             }
             Err(e) => {
                 log::warn!(
-                    "ONNX 会话:DirectML 不可用,回退 CPU({}): {e}",
+                    "ONNX session: DirectML unavailable, falling back to CPU ({}): {e}",
                     path.file_name().unwrap_or_default().to_string_lossy()
                 );
             }
@@ -89,7 +89,7 @@ pub(crate) fn onnx_session_from_file(
     }
     let sess = onnx_session_builder(intra_threads)?.commit_from_file(path)?;
     log::info!(
-        "ONNX 会话加载:CPU({})",
+        "ONNX session loaded: CPU ({})",
         path.file_name().unwrap_or_default().to_string_lossy()
     );
     Ok((sess, false))
@@ -113,15 +113,17 @@ pub(crate) fn onnx_session_from_memory(
             .and_then(|b| b.commit_from_memory(bytes));
         match dml {
             Ok(sess) => {
-                log::info!("ONNX 会话加载:DirectML GPU({label})");
+                log::info!("ONNX session loaded: DirectML GPU ({label})");
                 return Ok((sess, true));
             }
             Err(e) => {
-                log::warn!("ONNX 会话:DirectML 不可用,回退 CPU({label}): {e}");
+                log::warn!(
+                    "ONNX session: DirectML unavailable, falling back to CPU ({label}): {e}"
+                );
             }
         }
     }
     let sess = onnx_session_builder(intra_threads)?.commit_from_memory(bytes)?;
-    log::info!("ONNX 会话加载:CPU({label})");
+    log::info!("ONNX session loaded: CPU ({label})");
     Ok((sess, false))
 }

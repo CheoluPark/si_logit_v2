@@ -256,7 +256,7 @@ pub fn run_worker(fast: bool, parent_pid: Option<u32>) -> ! {
     };
     emit_stdout(&WireMsg::ready(engine.backend_name()));
     log::info!(
-        "[ocr-worker] 就绪 backend={} fast={fast} pid={}",
+        "[ocr-worker] ready backend={} fast={fast} pid={}",
         engine.backend_name(),
         std::process::id()
     );

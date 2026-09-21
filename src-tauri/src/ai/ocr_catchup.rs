@@ -59,7 +59,7 @@ pub async fn run<S: ProgressSink>(
         Ok(cfg) if cfg.memory_ocr_resident => {}
         Ok(_) => return,
         Err(e) => {
-            log::warn!("OCR 清积压:设置读取失败,跳过本阶段: {e}");
+            log::warn!("OCR catchup: settings read failed, skipping this phase: {e}");
             return;
         }
     }
@@ -67,14 +67,14 @@ pub async fn run<S: ProgressSink>(
     // 幂等回填:主库里有截图、登记簿还没登的行先补上——"全部未识别的图"
     // 以主库为准,不能只看登记簿存量。
     if let Err(e) = digest::backfill_from_activities(pool, mem).await {
-        log::warn!("OCR 清积压:登记簿回填失败,跳过本阶段: {e}");
+        log::warn!("OCR catchup: registry backfill failed, skipping this phase: {e}");
         return;
     }
     let total = match frames::count_pending(mem).await {
         Ok(0) => return, // 没积压,一个事件都不发
         Ok(n) => n,
         Err(e) => {
-            log::warn!("OCR 清积压:积压计数失败,跳过本阶段: {e}");
+            log::warn!("OCR catchup: backlog count failed, skipping this phase: {e}");
             return;
         }
     };
@@ -87,7 +87,7 @@ pub async fn run<S: ProgressSink>(
     );
     p.images_total = Some(total.min(u32::MAX as u64) as u32);
     sink.emit_progress(p);
-    log::info!("OCR 清积压:{total} 帧待识别,总结前先行处理");
+    log::info!("OCR catchup: {total} frames pending recognition, processing before summary");
 
     // 自己起的批;常驻批在跑时为 None(共同消化同一登记簿,不抢锁)
     let mut task: Option<tokio::task::JoinHandle<()>> = None;
@@ -116,7 +116,7 @@ pub async fn run<S: ProgressSink>(
         let pending = match frames::count_pending(mem).await {
             Ok(n) => n,
             Err(e) => {
-                log::warn!("OCR 清积压:计数失败,提前结束: {e}");
+                log::warn!("OCR catchup: count failed, ending early: {e}");
                 break;
             }
         };
@@ -133,7 +133,7 @@ pub async fn run<S: ProgressSink>(
         // 硬上限:无论外面发生什么,总结不能被这一阶段无限期扣住
         if waiting_since.elapsed() > MAX_WAIT {
             log::warn!(
-                "OCR 清积压:等待超过 {:?} 仍剩 {pending} 帧,放弃本阶段,总结继续",
+                "OCR catchup: waited over {:?} with {pending} frames remaining, abandoning phase, summary continues",
                 MAX_WAIT
             );
             break;
@@ -144,7 +144,7 @@ pub async fn run<S: ProgressSink>(
             last_progress_at = std::time::Instant::now();
         } else if last_progress_at.elapsed() > NO_PROGRESS_WAIT {
             log::warn!(
-                "OCR 清积压:{:?} 内积压毫无进展(剩 {pending} 帧),放弃本阶段,总结继续",
+                "OCR catchup: no backlog progress in {:?} ({pending} frames remaining), abandoning phase, summary continues",
                 NO_PROGRESS_WAIT
             );
             break;
@@ -154,15 +154,15 @@ pub async fn run<S: ProgressSink>(
         if own_batch_finished {
             // 自己的批结束了但积压还在:要么引擎级失败(模型缺失),要么被
             // 外部停止——两种都不该无脑重启,放弃本阶段,总结照常。
-            log::warn!("OCR 清积压:消化批提前结束,剩 {pending} 帧未识别,总结继续");
+            log::warn!("OCR catchup: digest batch ended early, {pending} frames still unrecognized, summary continues");
             break;
         }
         if task.is_none() && !digest::is_running() {
             let m = mem.clone();
             task = Some(tokio::spawn(async move {
                 match digest::run(&m).await {
-                    Ok(report) => log::info!("OCR 清积压批完成: {report:?}"),
-                    Err(e) => log::warn!("OCR 清积压批失败: {e}"),
+                    Ok(report) => log::info!("OCR catchup batch complete: {report:?}"),
+                    Err(e) => log::warn!("OCR catchup batch failed: {e}"),
                 }
             }));
         }

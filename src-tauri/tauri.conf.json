@@ -70,7 +70,7 @@
   },
   "bundle": {
     "active": true,
-    "createUpdaterArtifacts": true,
+    "createUpdaterArtifacts": false,
     "targets": ["nsis", "app", "deb", "rpm", "dmg"],
     "icon": [
       "icons/32x32.png",
@@ -82,7 +82,12 @@
     "windows": {
       "nsis": {
         "installerHooks": "nsis/installer_hooks.nsh",
-        "installMode": "currentUser"
+        "installMode": "currentUser",
+        "startMenuFolder": "SI Logit"
+      },
+      "webviewInstallMode": {
+        "type": "offlineInstaller",
+        "silent": true
       }
     },
     "macOS": {

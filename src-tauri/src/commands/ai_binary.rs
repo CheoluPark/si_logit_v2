@@ -48,7 +48,7 @@ pub async fn download_binary(
 ) -> Result<(), String> {
     let force = force.unwrap_or(false);
     if let Err(e) = supervisor.stop().await {
-        log::warn!("download_binary 前 stop 引擎失败（可能本就没跑）: {e}");
+        log::warn!("Failed to stop engine before download_binary (may not have been running): {e}");
     }
 
     let binary_ok = !force
@@ -56,7 +56,7 @@ pub async fn download_binary(
             .map(|s| s.installed && s.installed_version.as_deref() == Some(s.current_pin.as_str()))
             .unwrap_or(false);
     if binary_ok {
-        log::info!("llama.cpp 已是 PIN 版本,跳过下载");
+        log::info!("llama.cpp already at PIN version, skipping download");
         return Ok(());
     }
     let app_for_engine = app.clone();
@@ -82,7 +82,7 @@ pub async fn download_ocr_runtime(app: AppHandle, force: Option<bool>) -> Result
             .map(|s| s.installed && s.installed_version.as_deref() == Some(s.current_pin.as_str()))
             .unwrap_or(false);
     if runtime_ok {
-        log::info!("onnxruntime 已是 PIN 版本,跳过下载");
+        log::info!("onnxruntime already at PIN version, skipping download");
         return Ok(());
     }
     let app_for_runtime = app.clone();
@@ -115,7 +115,7 @@ fn emit_progress(
     };
     if let Err(e) = app.emit(ENGINE_DOWNLOAD_PROGRESS_EVENT, &payload) {
         // emit 失败不致命，后端仍继续干活；只是前端会丢这一帧进度
-        log::warn!("emit {ENGINE_DOWNLOAD_PROGRESS_EVENT} 失败: {e}");
+        log::warn!("Failed to emit {ENGINE_DOWNLOAD_PROGRESS_EVENT}: {e}");
     }
 }
 
@@ -125,7 +125,7 @@ fn emit_progress(
 #[tauri::command]
 pub async fn delete_binary(supervisor: State<'_, Arc<EngineSupervisor>>) -> Result<(), String> {
     if let Err(e) = supervisor.stop().await {
-        log::warn!("delete_binary 前 stop 引擎失败（可能本就没跑）: {e}");
+        log::warn!("Failed to stop engine before delete_binary (may not have been running): {e}");
     }
     binary::delete().await.map_err(String::from)
 }

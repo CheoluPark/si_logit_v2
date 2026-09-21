@@ -69,13 +69,13 @@ fn grab_focused_image(expected_pid: u32) -> Option<image::RgbaImage> {
     {
         let pid = macos_frontmost_pid()?;
         if expected_pid != 0 && pid != expected_pid {
-            log::debug!("跳过截图：前台已从 pid={expected_pid} 切到 pid={pid}（TOCTOU 防护）");
+            log::debug!("skipping screenshot: foreground switched from pid={expected_pid} to pid={pid} (TOCTOU guard)");
             return None;
         }
         match super::screenshot_macos::capture_focused_window(pid) {
             Ok(img) => Some(img),
             Err(e) => {
-                log::debug!("SCK 截图失败: {e}");
+                log::debug!("SCK screenshot failed: {e}");
                 None
             }
         }
@@ -87,7 +87,7 @@ fn grab_focused_image(expected_pid: u32) -> Option<image::RgbaImage> {
         if expected_pid != 0 {
             let pid = focused.pid().unwrap_or(0);
             if pid != 0 && pid != expected_pid {
-                log::debug!("跳过截图：前台已从 pid={expected_pid} 切到 pid={pid}（TOCTOU 防护）");
+                log::debug!("skipping screenshot: foreground switched from pid={expected_pid} to pid={pid} (TOCTOU guard)");
                 return None;
             }
         }

@@ -333,11 +333,7 @@ fn aggregate_timeline_detail(
             secs,
         })
         .collect();
-    apps.sort_by(|a, b| {
-        b.secs
-            .cmp(&a.secs)
-            .then_with(|| a.process.cmp(&b.process))
-    });
+    apps.sort_by(|a, b| b.secs.cmp(&a.secs).then_with(|| a.process.cmp(&b.process)));
 
     let mut titles: Vec<TitleUsage> = title_secs
         .into_iter()
@@ -374,15 +370,7 @@ pub async fn timeline_block_detail(
             titles: Vec::new(),
         });
     }
-    let rows = timeline_detail_rows(
-        pool,
-        from,
-        to,
-        super_category_id,
-        None,
-        device,
-    )
-    .await?;
+    let rows = timeline_detail_rows(pool, from, to, super_category_id, None, device).await?;
     Ok(aggregate_timeline_detail(rows, from, to))
 }
 
@@ -418,15 +406,8 @@ pub async fn timeline_app_block_detail(
         })
         .await?
         .unwrap_or(icon_process);
-    let rows = timeline_detail_rows(
-        pool,
-        from,
-        to,
-        super_category_id,
-        Some(group_key),
-        device,
-    )
-    .await?;
+    let rows =
+        timeline_detail_rows(pool, from, to, super_category_id, Some(group_key), device).await?;
     Ok(aggregate_timeline_detail(rows, from, to))
 }
 
@@ -1346,7 +1327,9 @@ mod tests {
         .await;
         seed_solo_group(&pool, "Code", "code").await;
 
-        let today_rows = timeline_sessions(&pool, today, DeviceFilter::All).await.unwrap();
+        let today_rows = timeline_sessions(&pool, today, DeviceFilter::All)
+            .await
+            .unwrap();
         assert_eq!(today_rows.len(), 2, "今日应返回跨午夜会话和当天会话");
         assert_eq!(today_rows[0].started_at, spanning_start.to_rfc3339());
         assert_eq!(today_rows[0].ended_at, spanning_end.to_rfc3339());

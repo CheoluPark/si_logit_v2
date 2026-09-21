@@ -26,19 +26,19 @@ pub fn ensure_rec_argmax(bytes: Vec<u8>) -> (Vec<u8>, bool) {
     let mut model = match ModelProto::parse_from_bytes(&bytes) {
         Ok(m) => m,
         Err(e) => {
-            log::warn!("rec.onnx 解析失败,走 f32 慢路径: {e}");
+            log::warn!("rec.onnx parse failed, falling back to f32 slow path: {e}");
             return (bytes, false);
         }
     };
     let graph = match model.graph.as_mut() {
         Some(g) => g,
         None => {
-            log::warn!("rec.onnx 无 graph,走 f32 慢路径");
+            log::warn!("rec.onnx has no graph, falling back to f32 slow path");
             return (bytes, false);
         }
     };
     let Some(out) = graph.output.first() else {
-        log::warn!("rec.onnx 无输出声明,走 f32 慢路径");
+        log::warn!("rec.onnx has no output declaration, falling back to f32 slow path");
         return (bytes, false);
     };
 
@@ -55,7 +55,7 @@ pub fn ensure_rec_argmax(bytes: Vec<u8>) -> (Vec<u8>, bool) {
         return (bytes, true);
     }
     if elem_type != DataType::FLOAT as i32 {
-        log::warn!("rec.onnx 输出类型未知({elem_type}),走 f32 慢路径");
+        log::warn!("rec.onnx unknown output type ({elem_type}), falling back to f32 slow path");
         return (bytes, false);
     }
 
@@ -92,11 +92,13 @@ pub fn ensure_rec_argmax(bytes: Vec<u8>) -> (Vec<u8>, bool) {
 
     match model.write_to_bytes() {
         Ok(patched) => {
-            log::info!("rec.onnx 已内存改图:输出 [N,T,C] f32 → ArgMax → [N,T] int64");
+            log::info!("rec.onnx patched in-memory: output [N,T,C] f32 -> ArgMax -> [N,T] int64");
             (patched, true)
         }
         Err(e) => {
-            log::warn!("rec.onnx 改图序列化失败,走 f32 慢路径: {e}");
+            log::warn!(
+                "rec.onnx patched graph serialization failed, falling back to f32 slow path: {e}"
+            );
             (bytes, false)
         }
     }

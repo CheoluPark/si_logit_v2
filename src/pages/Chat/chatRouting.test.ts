@@ -44,6 +44,7 @@ function baseAi(patch: Partial<AiConfig> = {}): AiConfig {
       systemPt: "",
       systemTw: "",
       systemEs: "",
+      systemKo: "",
     },
     batchSize: null,
     parallelSlots: null,

@@ -53,7 +53,6 @@
       "aiSummary": "AI 요약",
       "aiSettings": "AI 설정",
       "categories": "카테고리",
-      "devices": "클라우드 동기화",
       "settings": "설정",
       "chat": "채팅",
       "timeline": "타임라인",
@@ -71,12 +70,6 @@
       "resting": "대기 중",
       "stop": "기록 중지",
       "toggleAria": "기록 전환"
-    },
-    "sync": {
-      "connected": "연결됨",
-      "signedOut": "로그인하지 않음",
-      "aria": "기기 및 클라우드 동기화 관리",
-      "title": "기기 / 클라우드 동기화"
     }
   },
   "windowControls": {
@@ -876,7 +869,7 @@
       "models": "모델",
       "general": "일반",
       "prompt": "프롬프트",
-      "jiraMcp": "Jira MCP",
+      "jiraMcp": "Jira",
       "external": "Cloud API"
     },
     "engine": {
@@ -1085,7 +1078,7 @@
       "sectionTitle": "사용자 정보",
       "sectionInfo": "AI 요약에 포함되어 모델이 사용자의 작업과 맥락을 이해하도록 돕습니다.",
       "rowLabel": "사용자 정보 (선택)",
-      "placeholder": "예: Rust와 TypeScript를 주로 작성하는 백엔드 개발자입니다. 주말에는 게임을 만듭니다."
+      "placeholder": "예: 저는 디지털 로직 설계와 아날로그 회로 설계를 하는 엔제니어입니다. 주로 Vivado와 OrCAD를 사용합니다."
     },
     "prompt": {
       "sectionTitle": "프롬프트",
@@ -1171,147 +1164,21 @@
       "title": "Jira MCP 연결",
       "description": "사내 Jira 서버에 연결하여 Work Log 페이지에서 Work Item을 가져옵니다.",
       "urlLabel": "서버 URL",
-      "urlPlaceholder": "https://jira.example.com",
+      "urlPlaceholder": "http://dxdev.satreci.com/mcpwork/mcp",
       "patLabel": "Personal Access Token (PAT)",
       "patPlaceholder": "PAT를 입력하세요",
-      "transportLabel": "연결 방식",
-      "transportRemote": "Remote",
-      "hint": "본인에게 할당된 Work Item 조회에만 사용됩니다. 토큰은 로컬 설정에 저장됩니다."
+      "hint": "본인에게 할당된 Work Item 조회에만 사용됩니다. 토큰은 로컬 설정에 저장됩니다.",
+      "worklogPromptLabel": "Work Log 템플릿 프롬프트",
+      "worklogPromptDescription": "Work Log 설명 생성 시 함께 전달됩니다. 형식과 템플릿을 지정할 수 있으며, 사실은 OCR 및 Work Item 근거를 기준으로 합니다.",
+      "worklogPromptPlaceholder": "예: [작업 내용]\n- 수행한 작업\n\n[결과]\n- 확인된 결과",
+      "characterCount": "{{count}} / 1,000자"
     }
   },
   "devices": {
-    "title": "장치",
-    "meta": "{{count}}개 장치",
     "sectionSelf": "이 장치",
-    "sectionOthers": "다른 장치",
-    "emptyOthers": "다른 장치가 없습니다",
-    "relative": {
-      "justNow": "방금",
-      "minutesAgo": "{{count}}분 전",
-      "hoursAgo": "{{count}}시간 전",
-      "daysAgo": "{{count}}일 전"
-    },
-    "cloud": {
-      "state": {
-        "connected": "연결됨",
-        "notSignedIn": "로그인 필요",
-        "notConfigured": "미설정"
-      },
-      "desc": {
-        "signInPrompt": "Google 계정으로 로그인하여 장치를 동기화합니다.",
-        "configurePrompt": "Cloud API를 설정하여 장치를 동기화합니다."
-      },
-      "stats": {
-        "pending": "동기화 대기 {{count}}개",
-        "synced": "{{when}}에 동기화됨",
-        "waitingFirst": "첫 동기화 대기 중",
-        "deadLetter": "동기화 실패 {{count}}개"
-      },
-      "editCreds": "자격 증명 편집",
-      "actions": {
-        "syncNow": "지금 동기화",
-        "syncing": "동기화 중…",
-        "syncNowTitle": "지금 동기화",
-        "signOut": "로그아웃",
-        "signIn": "로그인",
-        "signOutTitle": "로그아웃",
-        "reauthTitle": "다시 인증",
-        "signInWithGoogle": "Google로 로그인",
-        "signingIn": "로그인 중…",
-        "configureOAuth": "OAuth 설정",
-        "restartApp": "앱 재시작"
-      },
-      "restartHint": "변경 사항을 적용하려면 앱을 재시작하세요.",
-      "datasets": {
-        "title": "동기화 데이터셋",
-        "hint": "클라우드에 동기화할 데이터를 선택합니다.",
-        "summaries": {
-          "label": "AI 요약",
-          "desc": "세그먼트 요약을 클라우드에 동기화합니다.",
-          "warn": "요약 데이터에 민감한 정보가 포함될 수 있습니다."
-        },
-        "chat": {
-          "label": "채팅 기록",
-          "desc": "채팅 대화를 클라우드에 동기화합니다.",
-          "warn": "채팅 기록에 민감한 정보가 포함될 수 있습니다."
-        },
-        "memory": {
-          "label": "화면 메모리",
-          "desc": "화면 텍스트 메모리를 클라우드에 동기화합니다.",
-          "warn": "화면 메모리에 민감한 정보가 포함될 수 있습니다."
-        },
-        "confirmTitle": "{{dataset}} 동기화",
-        "confirmNote": "선택한 데이터셋이 클라우드에 동기화됩니다.",
-        "confirmAction": "확인"
-      },
-      "oauthFallback": {
-        "hint": "브라우저에서 로그인이 완료되면 이 키를 복사하여 붙여넣으세요.",
-        "copy": "복사",
-        "copied": "복사됨"
-      }
-    },
-    "errors": {
-      "credExpired": "자격 증명이 만료되었습니다. 다시 로그인하세요.",
-      "transient": "일시적인 오류가 발생했습니다. 잠시 후 다시 시도하세요."
-    },
-    "setup": {
-      "header": "Cloud Sync 설정",
-      "collapse": "접기",
-      "step1": {
-        "title": "1단계: Google Cloud 프로젝트",
-        "bodyPrefix": "Google Cloud Console에서 ",
-        "cueEnable": "API 사용",
-        "bodySuffix": "을(를) 활성화하세요.",
-        "openLink": "Google Cloud Console 열기"
-      },
-      "step2": {
-        "title": "2단계: OAuth 동의 화면",
-        "bodyPrefix": "동의 화면을 설정하세요. ",
-        "cueStart": "동의 화면 만들기",
-        "bodyMiddle": "을(를) 클릭한 후 ",
-        "cueCreate": "사용자 테스트 추가",
-        "bodySuffix": "로 자신의 이메일을 추가하세요.",
-        "openLink": "동의 화면 열기"
-      },
-      "step3": {
-        "title": "3단계: OAuth 클라이언트",
-        "bodyPrefix": " ",
-        "cueCreateClient": "사용자 인증 정보 만들기",
-        "bodySuffix": "를 클릭하여 클라이언트 ID와 시크릿을 받으세요.",
-        "openLink": "사용자 인증 정보 열기"
-      },
-      "step4": {
-        "title": "4단계: 자격 증명 입력",
-        "clientIdLabel": "클라이언트 ID",
-        "secretLabel": "클라이언트 시크릿",
-        "showSecret": "시크릿 표시",
-        "hideSecret": "시크릿 숨기기",
-        "show": "표시",
-        "hide": "숨기기"
-      }
-    },
     "self": {
       "tag": "이 장치",
-      "lastActivity": "마지막 활동: {{when}}",
-      "todayCount": "오늘 {{count}}개 활동",
-      "appearanceAria": "외관 변경",
-      "appearanceTitle": "장치 외관",
-      "doubleClickToRename": "이름을 변경하려면 두 번 클릭하세요",
-      "renameAria": "이름 변경",
       "renameTitle": "장치 이름"
-    },
-    "other": {
-      "lastSync": "마지막 동기화: {{when}}",
-      "forgetAria": "{{name}} 장치 제거",
-      "forgetTitle": "장치 제거"
-    },
-    "forgetDialog": {
-      "title": "{{name}} 장치 제거",
-      "intro": "이 장치의 모든 클라우드 데이터가 삭제됩니다.",
-      "unaffected": "영향 없음: 다른 장치의 데이터.",
-      "confirm": "제거",
-      "doneToast": "{{name}} 제거 완료: {{count}}개 파일 삭제됨",
-      "error": "오류가 발생했습니다: {{message}}"
     }
   },
   "aiSummary": {
@@ -1611,12 +1478,12 @@
         "q": "오늘 뭐 했어요?"
       },
       "browser": {
-        "label": "브라우저",
-        "q": "오늘 브라우저에서 뭐 봤어요?"
+        "label": "Confluence",
+        "q": "오늘 Confluence에서 뭐 봤어요?"
       },
       "video": {
-        "label": "유튜브",
-        "q": "오늘 유튜브에 얼마나 시간을 썼어요?"
+        "label": "Jira",
+        "q": "오늘 Jira에 얼마나 시간을 썼어요?"
       },
       "category": {
         "label": "시간 배분",
@@ -1627,16 +1494,16 @@
         "q": "최근 2주간 매일 컴퓨터를 얼마나 사용했어요?"
       },
       "mail": {
-        "label": "이메일",
-        "q": "오늘 이메일에 얼마나 시간을 썼어요?"
+        "label": "최장 사용 앱",
+        "q": "오늘 가장 오래 사용한 앱은 무엇인가요?"
       },
       "searchkw": {
-        "label": "검색 기록",
-        "q": "오늘 뭐를 검색했어요?"
+        "label": "자주 본 창 제목",
+        "q": "오늘 자주 나타난 창 제목은 무엇인가요?"
       },
       "hours": {
         "label": "피크 시간",
-        "q": "하루 중 컴퓨터를 가장 많이 사용하는 시간대가 언제예요?"
+        "q": "최근 7일 기준, 컴퓨터를 가장 많이 사용한 시간대가 언제예요?"
       }
     },
     "conversations": {

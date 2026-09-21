@@ -39,7 +39,7 @@ pub fn spawn(app: AppHandle) {
         tokio::time::sleep(std::time::Duration::from_secs(FIRST_CHECK_DELAY_SECS)).await;
         loop {
             if let Err(e) = check_once(&app).await {
-                log::debug!("定时补识别本轮跳过: {e}");
+                log::debug!("scheduled OCR this round skipped: {e}");
             }
             tokio::time::sleep(std::time::Duration::from_secs(CHECK_GAP_SECS)).await;
         }
@@ -77,7 +77,7 @@ async fn check_once(app: &AppHandle) -> crate::error::Result<()> {
     digest::backfill_from_activities(&pool, mem).await?;
     let pending = super::frames::count_pending(mem).await.unwrap_or(0);
     if pending == 0 {
-        log::debug!("定时补识别:到点但无积压,今天无事可做");
+        log::debug!("scheduled OCR: due time reached but no backlog, nothing to do today");
         return Ok(());
     }
 
@@ -85,13 +85,13 @@ async fn check_once(app: &AppHandle) -> crate::error::Result<()> {
     // 下轮(10 分钟)自然重试。此后才标记+通知+跑——run 的任何失败一律
     // 当天不重试(简单一条规则,无撤销路径)。
     if digest::is_running() || digest::cooldown_remaining_secs().is_some() {
-        log::debug!("定时补识别:别的消化批正在跑,让路下轮");
+        log::debug!("scheduled OCR: another digest batch running, yielding to next round");
         return Ok(());
     }
     save_marks(mem, &today, &due).await?;
 
     log::info!(
-        "定时补识别:到点({}),{pending} 帧待识别,开始清积压",
+        "scheduled OCR: due time({}), {pending} frames pending, starting backlog clearance",
         due.join("/")
     );
     // 系统级提示由前端弹(文案走界面语言的 i18n);窗口收进托盘时监听仍在
@@ -100,7 +100,7 @@ async fn check_once(app: &AppHandle) -> crate::error::Result<()> {
         serde_json::json!({ "pending": pending }),
     );
     match digest::run(mem).await {
-        Ok(report) => log::info!("定时补识别完成: {report:?}"),
+        Ok(report) => log::info!("scheduled OCR completed: {report:?}"),
         // 被拒 = 批根本没开跑(上面的 is_running 检查与 run 内部抢权之间,
         // 别的批可能抢先;或恰好进入冷却)。必须退还当天标记——定时点每天
         // 只有一次机会,不能被一次没发生的运行消耗掉。
@@ -109,10 +109,10 @@ async fn check_once(app: &AppHandle) -> crate::error::Result<()> {
             if matches!(e, crate::error::Error::InvalidInput(_))
                 || e.to_string().contains("冷却") =>
         {
-            log::debug!("定时补识别:抢批失败({e}),退还当天标记,下轮再试");
+            log::debug!("scheduled OCR: batch acquisition failed ({e}), rolling back today's mark, retry next round");
             remove_marks(mem, &today, &due).await?;
         }
-        Err(e) => log::warn!("定时补识别失败(今天不再重试): {e}"),
+        Err(e) => log::warn!("scheduled OCR failed (no more retries today): {e}"),
     }
     Ok(())
 }

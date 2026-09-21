@@ -17,7 +17,7 @@ interface SettingsContextValue {
   settings: Settings | null;
   loading: boolean;
   update: (patch: SettingsPatch) => void;
-  /** 后端 settings 被旁路命令（如 set_active_model）改写后，前端调一下重读，
+  /** 后端 settings 被旁路命令改写后，前端调一下重读，
    *  让 useSettings 订阅者拿到新值。普通改设置不要用这个，用 update。 */
   reload: () => Promise<void>;
 }

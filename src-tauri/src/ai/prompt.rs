@@ -6,7 +6,7 @@
 //!
 //! ## 数据 vs 代码
 //!
-//! 三套语言的内置 system prompt 是 *数据*，存在 [`src-tauri/resources/prompts/`]。
+//! 各语言的内置 system prompt 是 *数据*，存在 [`src-tauri/resources/prompts/`]。
 //! 通过 `include_str!` 编译时嵌入二进制——零运行时开销，发布产物自带，无需额外
 //! 部署步骤。改 prompt 内容只动 `.md` 文件，不动 `.rs` 代码。
 //!
@@ -22,6 +22,7 @@ use crate::ai::config::AiConfig;
 // `src-tauri/` → `resources/prompts/...`。完全在 src-tauri crate 边界内。
 const PROMPT_ZH: &str = include_str!("../../resources/prompts/system_zh.md");
 const PROMPT_EN: &str = include_str!("../../resources/prompts/system_en.md");
+const PROMPT_KO: &str = include_str!("../../resources/prompts/system_ko.md");
 const PROMPT_JA: &str = include_str!("../../resources/prompts/system_ja.md");
 const PROMPT_PT: &str = include_str!("../../resources/prompts/system_pt.md");
 const PROMPT_TW: &str = include_str!("../../resources/prompts/system_tw.md");
@@ -30,14 +31,15 @@ const PROMPT_ES: &str = include_str!("../../resources/prompts/system_es.md");
 // 周报 system prompt（基于一周内日报全文做整周回顾）
 const WEEKLY_ZH: &str = include_str!("../../resources/prompts/weekly_zh.md");
 const WEEKLY_EN: &str = include_str!("../../resources/prompts/weekly_en.md");
+const WEEKLY_KO: &str = include_str!("../../resources/prompts/weekly_ko.md");
 const WEEKLY_JA: &str = include_str!("../../resources/prompts/weekly_ja.md");
 const WEEKLY_PT: &str = include_str!("../../resources/prompts/weekly_pt.md");
 const WEEKLY_TW: &str = include_str!("../../resources/prompts/weekly_tw.md");
 const WEEKLY_ES: &str = include_str!("../../resources/prompts/weekly_es.md");
 
-/// 六语 (zh/tw/en/ja/pt/es) 之间挑一个 —— 把分散在多处的 match 收敛进单一 helper。
+/// 七语 (zh/tw/en/ja/pt/es/ko) 之间挑一个 —— 把分散在多处的 match 收敛进单一 helper。
 ///
-/// `prompt_language` 在 sanitize 时已被钳到 "zh" / "tw" / "en" / "ja" / "pt" / "es"，
+/// `prompt_language` 在 sanitize 时已被钳到 "zh" / "tw" / "en" / "ja" / "pt" / "es" / "ko"，
 /// 本函数对其它值兜底走 zh（与 sanitize 行为一致）。
 ///
 /// 注：system / image-describe / weekly 这三种 system prompt 的内置默认走本函数选
@@ -49,6 +51,7 @@ fn pick_lang<'a>(
     zh: &'a str,
     tw: &'a str,
     en: &'a str,
+    ko: &'a str,
     ja: &'a str,
     pt: &'a str,
     es: &'a str,
@@ -56,6 +59,7 @@ fn pick_lang<'a>(
     match lang {
         "tw" => tw,
         "en" => en,
+        "ko" => ko,
         "ja" => ja,
         "pt" => pt,
         "es" => es,
@@ -73,6 +77,7 @@ fn pick_system_base(ai: &AiConfig) -> &str {
         &ai.prompt_overrides.system_zh,
         &ai.prompt_overrides.system_tw,
         &ai.prompt_overrides.system_en,
+        &ai.prompt_overrides.system_ko,
         &ai.prompt_overrides.system_ja,
         &ai.prompt_overrides.system_pt,
         &ai.prompt_overrides.system_es,
@@ -82,7 +87,7 @@ fn pick_system_base(ai: &AiConfig) -> &str {
         ov
     } else {
         pick_lang(
-            lang, PROMPT_ZH, PROMPT_TW, PROMPT_EN, PROMPT_JA, PROMPT_PT, PROMPT_ES,
+            lang, PROMPT_ZH, PROMPT_TW, PROMPT_EN, PROMPT_KO, PROMPT_JA, PROMPT_PT, PROMPT_ES,
         )
     }
 }
@@ -119,6 +124,7 @@ pub fn build_system_prompt(ai: &AiConfig) -> String {
             "关于用户：",
             "關於使用者：",
             "About the user: ",
+            "사용자 정보: ",
             "ユーザーについて：",
             "Sobre o usuário: ",
             "Sobre el usuario: ",
@@ -137,6 +143,7 @@ pub fn build_user_prompt(ai: &AiConfig, ctx: &SegmentContext) -> String {
     match ai.prompt_language.as_str() {
         // pt / es 复用英文脚手架（对应语言的 system prompt 主导输出语言）
         "en" | "pt" | "es" => build_user_prompt_en(ctx),
+        "ko" => build_user_prompt_ko(ctx),
         "ja" => build_user_prompt_ja(ctx),
         _ => build_user_prompt_zh(ctx),
     }
@@ -204,6 +211,37 @@ fn build_user_prompt_en(ctx: &SegmentContext) -> String {
     out
 }
 
+fn build_user_prompt_ko(ctx: &SegmentContext) -> String {
+    let mut out = String::new();
+    out.push_str(&format!(
+        "시간대: {} ({:02}:00 – {:02}:00)\n",
+        ctx.label, ctx.start_hour, ctx.end_hour,
+    ));
+    if !ctx.top_apps.is_empty() {
+        out.push_str("가장 많이 사용한 앱:\n");
+        for (name, minutes, category) in ctx.top_apps.iter().take(8) {
+            out.push_str(&format!("- {} ({}분 · {})\n", name, minutes, category));
+        }
+    }
+    if ctx.timeline.is_empty() {
+        out.push_str(
+            "\n(이 시간대에는 시간별 활동 기록이 없습니다. 위 앱 통계만 바탕으로 어떤 앱을 대략 얼마나 사용했는지 2~4문장으로 요약하고, 구체적인 행동이나 내용을 지어내지 마세요.)",
+        );
+    } else {
+        out.push_str(&format!(
+            "\n다음은 이 시간대의 활동 기록 타임라인입니다. 총 {}개 시간대이며, 각 행은 앱 누적 시간(창 제목 예시) · … 형식이고 시간순으로 정렬되어 있습니다:\n",
+            ctx.timeline.len(),
+        ));
+        for (i, (t, d)) in ctx.timeline.iter().enumerate() {
+            out.push_str(&format!("{}. [{}] {}\n", i + 1, t, d.trim()));
+        }
+        out.push_str(
+            "\n이 타임라인을 바탕으로 시간 순서에 따라 이 시간대의 활동 로그를 작성하세요. 창 제목(파일명·페이지 제목·동영상 제목)이 실제 활동을 파악하는 주요 단서이므로 제목에 없는 세부 사항은 추측하지 마세요. 같은 활동은 전체 글에서 한 번만 쓰고 비슷한 항목은 합치며, 시스템 규칙의 문단 수와 문장 수 제한을 지키세요. 각 행을 그대로 되풀이하거나 위 자료(시간대·앱 목록·타임라인)를 출력에 복사하지 말고 로그 본문의 첫 문장부터 바로 시작하세요.",
+        );
+    }
+    out
+}
+
 fn build_user_prompt_ja(ctx: &SegmentContext) -> String {
     let mut out = String::new();
     out.push_str(&format!(
@@ -265,7 +303,7 @@ pub struct WeeklyContext<'a> {
 pub fn build_weekly_system_prompt(ai: &AiConfig) -> String {
     let lang = ai.prompt_language.as_str();
     let base = pick_lang(
-        lang, WEEKLY_ZH, WEEKLY_TW, WEEKLY_EN, WEEKLY_JA, WEEKLY_PT, WEEKLY_ES,
+        lang, WEEKLY_ZH, WEEKLY_TW, WEEKLY_EN, WEEKLY_KO, WEEKLY_JA, WEEKLY_PT, WEEKLY_ES,
     );
     let mut out = String::from(base.trim_end());
     let brief = ai.user_brief.trim();
@@ -275,6 +313,7 @@ pub fn build_weekly_system_prompt(ai: &AiConfig) -> String {
             "关于用户：",
             "關於使用者：",
             "About the user: ",
+            "사용자 정보: ",
             "ユーザーについて：",
             "Sobre o usuário: ",
             "Sobre el usuario: ",
@@ -291,6 +330,7 @@ pub fn build_weekly_user_prompt(ai: &AiConfig, ctx: &WeeklyContext) -> String {
     match ai.prompt_language.as_str() {
         // pt / es 复用英文脚手架（对应语言的 weekly system prompt 主导输出语言）
         "en" | "pt" | "es" => build_weekly_user_prompt_en(ctx),
+        "ko" => build_weekly_user_prompt_ko(ctx),
         "ja" => build_weekly_user_prompt_ja(ctx),
         _ => build_weekly_user_prompt_zh(ctx),
     }
@@ -378,6 +418,44 @@ fn build_weekly_user_prompt_en(ctx: &WeeklyContext) -> String {
     out
 }
 
+fn build_weekly_user_prompt_ko(ctx: &WeeklyContext) -> String {
+    let mut out = String::new();
+    out.push_str(&format!(
+        "이번 주 범위: {} – {}\n\n",
+        ctx.week_start, ctx.week_end
+    ));
+    if ctx.days.is_empty() && ctx.top_apps.is_empty() {
+        out.push_str(
+            "(이번 주에는 일일 보고서 데이터도 앱 사용 기록도 없습니다. 이 사실을 밝히고 종료하세요.)",
+        );
+        return out;
+    }
+    if !ctx.top_apps.is_empty() {
+        out.push_str("이번 주 가장 많이 사용한 앱:\n");
+        for (name, minutes, category) in ctx.top_apps.iter().take(8) {
+            out.push_str(&format!("- {} ({}분 · {})\n", name, minutes, category));
+        }
+        out.push('\n');
+    }
+    if ctx.days.is_empty() {
+        out.push_str(
+            "이번 주에는 일일 보고서가 없습니다. 위 앱 통계만 바탕으로 짧은 주간 회고를 작성하세요. 어떤 앱을 대략 얼마나 사용했고 시간이 어떻게 나뉘었는지만 설명하고, 구체적인 행동·이야기·상황을 지어내지 마세요.",
+        );
+        return out;
+    }
+    out.push_str(&format!(
+        "다음은 이번 주 {}일의 일일 보고서 전문입니다. 날짜순이며, 표시되지 않은 날짜에는 데이터가 없습니다.\n\n",
+        ctx.days.len(),
+    ));
+    for (date, weekday, body) in ctx.days.iter() {
+        out.push_str(&format!("[{} {}]\n", date, weekday));
+        out.push_str(body.trim());
+        out.push_str("\n\n");
+    }
+    out.push_str("앱 통계와 일일 보고서를 종합해 한 문단의 주간 회고를 작성하세요. 날짜별로 되풀이하지 마세요.");
+    out
+}
+
 fn build_weekly_user_prompt_ja(ctx: &WeeklyContext) -> String {
     let mut out = String::new();
     out.push_str(&format!(
@@ -428,6 +506,15 @@ pub fn weekday_short(lang: &str, weekday: chrono::Weekday) -> &'static str {
             Fri => "Fri",
             Sat => "Sat",
             Sun => "Sun",
+        },
+        "ko" => match weekday {
+            Mon => "월",
+            Tue => "화",
+            Wed => "수",
+            Thu => "목",
+            Fri => "금",
+            Sat => "토",
+            Sun => "일",
         },
         "ja" => match weekday {
             Mon => "月",
@@ -482,8 +569,8 @@ mod tests {
 
     #[test]
     fn system_prompt_uses_builtin_per_lang_and_appends_brief() {
-        // 五语内置文本互不相同且非空
-        let texts: Vec<String> = ["zh", "tw", "en", "ja", "pt"]
+        // 各语言内置文本互不相同且非空
+        let texts: Vec<String> = ["zh", "tw", "en", "ja", "pt", "ko"]
             .iter()
             .map(|l| build_system_prompt(&cfg(l)))
             .collect();
@@ -492,6 +579,7 @@ mod tests {
         }
         assert_ne!(texts[0], texts[2]);
         assert_ne!(texts[2], texts[4]);
+        assert!(texts[5].contains("한국어"));
 
         // user_brief 拼在末尾,带对应语言的标签
         let mut c = cfg("en");
@@ -499,19 +587,27 @@ mod tests {
         let out = build_system_prompt(&c);
         assert!(out.ends_with("About the user: backend dev"), "{out}");
         // 空简介不留悬空标签
-        let out = build_system_prompt(&cfg("en"));
+        let mut no_brief = cfg("en");
+        no_brief.user_brief.clear();
+        let out = build_system_prompt(&no_brief);
         assert!(!out.contains("About the user"));
     }
 
     #[test]
     fn system_prompt_prefers_nonempty_override() {
         let mut c = cfg("zh");
+        c.user_brief.clear();
         c.prompt_overrides.system_zh = "自定义提示词".into();
         assert_eq!(build_system_prompt(&c), "自定义提示词");
         // 别的语言的覆盖不串台:en 仍走内置
         let mut c = cfg("en");
         c.prompt_overrides.system_zh = "自定义提示词".into();
         assert!(build_system_prompt(&c).len() > 100);
+
+        let mut c = cfg("ko");
+        c.user_brief.clear();
+        c.prompt_overrides.system_ko = "사용자 정의 프롬프트".into();
+        assert_eq!(build_system_prompt(&c), "사용자 정의 프롬프트");
         // 空白覆盖等同未覆盖
         let mut c = cfg("zh");
         c.prompt_overrides.system_zh = "   ".into();
@@ -541,6 +637,9 @@ mod tests {
         let ja = build_user_prompt(&cfg("ja"), &ctx);
         assert_ne!(ja, en);
         assert!(ja.contains("VS Code"));
+        let ko = build_user_prompt(&cfg("ko"), &ctx);
+        assert!(ko.contains("시간대:") && ko.contains("가장 많이 사용한 앱"));
+        assert_ne!(ko, en);
     }
 
     #[test]
@@ -557,7 +656,7 @@ mod tests {
             days: &days,
             top_apps: &apps,
         };
-        for lang in ["zh", "tw", "en", "ja", "pt"] {
+        for lang in ["zh", "tw", "en", "ja", "pt", "ko"] {
             let sys = build_weekly_system_prompt(&cfg(lang));
             assert!(sys.len() > 100, "{lang} weekly system 为空");
             let user = build_weekly_user_prompt(&cfg(lang), &ctx);
@@ -566,17 +665,20 @@ mod tests {
                 "{lang}: {user}"
             );
         }
+        assert!(build_weekly_system_prompt(&cfg("ko")).contains("한국어"));
+        assert!(build_weekly_user_prompt(&cfg("ko"), &ctx).contains("이번 주 범위:"));
     }
 
     #[test]
     fn weekday_short_all_langs_all_days() {
         use chrono::Weekday::*;
         for d in [Mon, Tue, Wed, Thu, Fri, Sat, Sun] {
-            for lang in ["zh", "tw", "en", "ja", "pt"] {
+            for lang in ["zh", "tw", "en", "ja", "pt", "ko"] {
                 assert!(!weekday_short(lang, d).is_empty());
             }
         }
         assert_eq!(weekday_short("zh", Mon), "周一");
         assert_eq!(weekday_short("en", Sun), "Sun");
+        assert_eq!(weekday_short("ko", Mon), "월");
     }
 }

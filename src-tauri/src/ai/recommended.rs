@@ -83,7 +83,7 @@ pub fn recommended() -> &'static [Recommended] {
             Ok(root) => root.models,
             Err(e) => {
                 log::error!(
-                    "recommended-models.json 解析失败：{e}（推荐区将为空，用户仍可走自定义 HF / 本地导入）"
+                    "recommended-models.json parse failed: {e} (recommended section will be empty, users can still use custom HF / local import)"
                 );
                 Vec::new()
             }

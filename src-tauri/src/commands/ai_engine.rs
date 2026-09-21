@@ -109,27 +109,6 @@ pub async fn stop_engine(supervisor: State<'_, Arc<EngineSupervisor>>) -> Result
     supervisor.stop().await.map_err(String::from)
 }
 
-/// 切换 / 设置当前在用的模型（旧版单一字段；新代码请用 [`set_step_model`]）。
-///
-/// 写 settings 后顺手 stop 在跑的 server——下次用户点"启动引擎"会带新模型重起。
-/// 不在这里自动 start，因为 start 可能 90s 才返回，命令调用方等不动；让用户主动触发更可控。
-#[tauri::command]
-pub async fn set_active_model(
-    pool: State<'_, DbPool>,
-    supervisor: State<'_, Arc<EngineSupervisor>>,
-    main_file: String,
-    mmproj_file: Option<String>,
-) -> Result<(), String> {
-    let mut cfg = settings::load(&pool).await.map_err(String::from)?;
-    cfg.ai.active_main = main_file.trim().to_string();
-    cfg.ai.active_mmproj = mmproj_file.unwrap_or_default().trim().to_string();
-    settings::save(&pool, &cfg).await.map_err(String::from)?;
-
-    // 切了模型，旧 server 跑的就是旧模型，停掉等用户手动重启
-    let _ = supervisor.stop().await;
-    Ok(())
-}
-
 /// 单独设置段总结（summary）/ 对话（chat）的模型；另一个槽位不动。
 ///
 /// `step` 取 `"summary"` / `"chat"`；`main_file` 空字符串 = 清掉该槽位的覆盖

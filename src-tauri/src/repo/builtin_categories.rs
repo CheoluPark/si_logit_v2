@@ -61,7 +61,7 @@ fn rules() -> &'static HashMap<String, String> {
             let parsed: RawRules = match serde_json::from_str(json) {
                 Ok(p) => p,
                 Err(e) => {
-                    log::error!("builtin_categories.{label}.json 解析失败（跳过该语言）：{e}");
+                    log::error!("builtin_categories.{label}.json failed to parse (skipped): {e}");
                     continue;
                 }
             };

@@ -140,12 +140,6 @@ export interface SuperCategoryPatch {
   icon?: string;
 }
 
-export interface UnclassifiedApp {
-  processName: string;
-  minutes: number;
-  lastSeenAt: string;
-}
-
 export interface AppGroupMember {
   processName: string;
   /// 该成员近 7 天累计时长（秒），按 process_name 聚合，跨设备求和
@@ -448,14 +442,12 @@ export interface SegmentSummaryRow {
 
 /** AI 子系统的所有用户配置；嵌进 Settings.ai。
  *  字段镜像后端 Rust `crate::ai::config::AiConfig`（camelCase）。 */
-/** Jira MCP 서버 연결 설정. transport는 현재 "remote"만 지원. */
+/** Jira MCP 서버 연결 설정. */
 export interface JiraMcpConfig {
-  /** Jira 서버 base URL (예: https://jira.company.com) */
+  /** Jira 서버 base URL (예: http://dxdev.satreci.com/mcpwork/mcp) */
   url: string;
   /** Personal Access Token (Bearer 인증용) */
   pat: string;
-  /** 연결 방식: "remote" */
-  transport: string;
 }
 
 export interface ExternalProfile {
@@ -510,7 +502,7 @@ export interface AiConfig {
   /** Chat 思考模式："auto"（默认，云端不注入参数、本地默认关）/ "on" / "off"。
    *  开关对部分云端服务商可能不生效（best-effort）。 */
   chatThinking: string;
-  /** AI 总结使用的提示词语言："zh" / "tw" / "en" / "ja" / "pt" / "es"。
+  /** AI 总结使用的提示词语言："zh" / "tw" / "en" / "ja" / "pt" / "es" / "ko"。
    *  决定模型用哪种语言写总结，也决定 UI 编辑时显示哪一份覆盖。 */
   promptLanguage: PromptLanguage;
   /** 用户对内置 system prompt（段总结）的覆盖；按语言独立。
@@ -546,9 +538,11 @@ export interface AiConfig {
 
   /** Jira MCP 서버 연결 설정 (Work Log 페이지의 fetchWorkItems가 사용) */
   jiraMcp?: JiraMcpConfig;
+  /** Optional Work Log system-prompt template; sanitized and capped by the backend. */
+  jiraWorklogPrompt?: string;
 }
 
-export type PromptLanguage = "zh" | "tw" | "en" | "ja" | "pt" | "es";
+export type PromptLanguage = "zh" | "tw" | "en" | "ja" | "pt" | "es" | "ko";
 
 export interface PromptOverrides {
   /** 中文 system prompt 覆盖；空 = 用内置默认 */
@@ -560,6 +554,8 @@ export interface PromptOverrides {
   systemTw: string;
   /** 西班牙语 system prompt 覆盖 */
   systemEs: string;
+  /** 한국어 system prompt 덮어쓰기 */
+  systemKo: string;
 }
 
 /** 忽略规则：进程 + 标题命中的活动行不计入统计（记录/截图照常）。
@@ -780,20 +776,6 @@ export interface WorkItem {
   output: string;
 }
 
-/** Draft for registering a work log entry */
-export interface WorkLogDraft {
-  workItemKey: string;
-  summary: string;
-  startedAt: string;
-  endedAt: string;
-}
-
-/** Result of work log registration */
-export interface WorkLogResult {
-  success: boolean;
-  message: string;
-}
-
 export const api = {
   /** 把文本写到指定路径（AI 总结导出 Markdown 用） */
   writeTextFile: (path: string, content: string) =>
@@ -890,8 +872,6 @@ export const api = {
     invoke<void>("assign_app_to_category", { processName, categoryId }),
   unassignApp: (processName: string) =>
     invoke<void>("unassign_app", { processName }),
-  listUnclassifiedApps: (daysBack?: number) =>
-    invoke<UnclassifiedApp[]>("list_unclassified_apps", { daysBack }),
   // —— v28 大类（super-category）—— local only
   listSuperCategories: () =>
     invoke<SuperCategory[]>("list_super_categories"),
@@ -954,19 +934,6 @@ export const api = {
    *  前端只需检查 ok 字段。 */
   testAiEndpoint: (endpoint: string, apiKey?: string) =>
     invoke<TestAiEndpointResp>("test_ai_endpoint", { endpoint, apiKey }),
-  /** 真发一次 chat（max_tokens=1）验证模型 ID 可用；withImage 时带 1×1 PNG 测多模态。 */
-  testAiChat: (
-    endpoint: string,
-    apiKey: string | undefined,
-    model: string,
-    withImage: boolean,
-  ) =>
-    invoke<TestAiEndpointResp>("test_ai_chat", {
-      endpoint,
-      apiKey,
-      model,
-      withImage,
-    }),
   getEngineStatus: () => invoke<EngineStatus>("get_engine_status"),
   /** 下载 llama.cpp 引擎（只管 llama.cpp，OCR 组件走 downloadOcrRuntime）。
    *  已装且版本匹配时幂等快速返回；force=true 强制重下（「重新下载」按钮）。
@@ -1031,11 +998,6 @@ export const api = {
    *  目录不存在或没有 partial 时返回 `[]`。 */
   listPartialDownloads: () =>
     invoke<PartialDownload[]>("list_partial_downloads"),
-  /** 切换 / 设置当前在用的模型（旧版 API；新代码请用 setStepModel）。写 settings 后会把
-   *  在跑的 server 停掉，让用户主动点"启动引擎"按新模型重起。
-   *  mmprojFile 传 null 表示没有（纯文本模型）。 */
-  setActiveModel: (mainFile: string, mmprojFile: string | null) =>
-    invoke<void>("set_active_model", { mainFile, mmprojFile }),
   /** 单独设置 段总结（summary）/ 对话（chat）的模型；其它 step 不动。
    *  mainFile 空字符串 = 清掉该 step 的覆盖（summary fallback 到 activeMain，
    *  chat 回到自动路由）。同时会 stop 在跑的 server。chat 忽略 mmprojFile。 */
@@ -1123,13 +1085,15 @@ export const api = {
   /** Chat 问答：后端 agent 循环（工具查询 + LLM 归纳）跑完一次性返回。
    *  可能长达数十秒，调用方自己管 loading 态。历史由后端从库里读；
    *  conversationId 传 null = 新会话（后端隐式创建并返回 id）；
-   *  askId 由前端生成，是本次问答的取消句柄（chatCancel 用）。 */
+   *  askId 由前端生成，是本次问答的取消句柄（chatCancel 用）；
+   *  presetId 仅由示例卡传入，供后端走确定性查询路由。 */
   chatAsk: (
     question: string,
     conversationId: number | null,
     locale?: string,
     askId?: string,
     parentGuid?: string,
+    presetId?: string,
   ) =>
     invoke<ChatAskResult>("chat_ask", {
       question,
@@ -1137,6 +1101,7 @@ export const api = {
       locale,
       askId,
       parentGuid,
+      presetId,
     }),
   /** 重新回答当前路径上最近的提问:追加新版本落库(不删旧回答),
    *  历史沿 leafGuid(缺省=会话最新叶)回溯并截断到该提问之前。 */
@@ -1196,12 +1161,9 @@ export const api = {
     invoke<void>("export_usage_xlsx", { path, spec }),
   /** 最早一条活动记录的本地日期("YYYY-MM-DD";空库 null)。导出「全部」范围用。 */
   earliestActivityDate: () => invoke<string | null>("earliest_activity_date"),
-  // --- worklog: MCP placeholder ---
-  /** Fetch active Jira work items assigned to the current user (placeholder). */
+  // --- worklog: Jira MCP ---
+  /** Fetch active Jira work items assigned to the current user. */
   fetchWorkItems: () => invoke<WorkItem[]>("fetch_work_items"),
-  /** Register a work log entry for a Jira issue (placeholder). */
-  registerWorkLog: (draft: WorkLogDraft) =>
-    invoke<WorkLogResult>("register_work_log", { draft }),
   /** AI로 스크린샷 기반 작업 묘사를 생성한다. */
   generateWorkDescription: (
     date: string,

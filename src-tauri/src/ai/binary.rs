@@ -230,7 +230,7 @@ where
             }
         } else {
             log::warn!(
-                "ai engine sha256 未录入（platform={p:?} tag={tag} asset={asset_name}），跳过校验"
+                "ai engine sha256 not recorded (platform={p:?} tag={tag} asset={asset_name}), skipping verification"
             );
         }
 
@@ -287,7 +287,7 @@ async fn clear_dir_keep_partials(dir: &Path, keep: &[String]) -> Result<()> {
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(()),
             Err(e) => {
                 log::warn!(
-                    "清理引擎目录第 {} 次失败: path={} kind={:?} err={e}",
+                    "engine dir cleanup attempt #{} failed: path={} kind={:?} err={e}",
                     attempt + 1,
                     dir.display(),
                     e.kind()
@@ -334,7 +334,7 @@ async fn remove_dir_all_retry(dir: &Path) -> Result<()> {
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(()),
             Err(e) => {
                 log::warn!(
-                    "remove_dir_all 第 {} 次失败: path={} kind={:?} err={e}",
+                    "remove_dir_all attempt #{} failed: path={} kind={:?} err={e}",
                     attempt + 1,
                     dir.display(),
                     e.kind()
@@ -412,7 +412,7 @@ where
     }
     let resuming = resume_from > 0 && status == reqwest::StatusCode::PARTIAL_CONTENT;
     if resume_from > 0 && !resuming {
-        log::info!("引擎下载：服务器未接受 Range（HTTP {status}），从头重下 {url}");
+        log::info!("engine download: server did not accept Range (HTTP {status}), re-downloading from start {url}");
     }
     // 206 的 content_length 是**剩余**字节数，总量要补上已下的部分
     let total = match resp.content_length() {
@@ -436,7 +436,7 @@ where
     let mut stream = resp.bytes_stream();
     let mut downloaded: u64 = resume_from;
     if resuming {
-        log::info!("引擎下载：从 {resume_from} 字节断点续传 {url}");
+        log::info!("engine download: resuming from {resume_from} bytes {url}");
     }
     let mut last_emit = std::time::Instant::now();
     progress(DownloadPhase::Downloading, downloaded, total);
@@ -549,7 +549,7 @@ fn extract_zip(archive: &Path, dest: &Path) -> Result<()> {
         let outpath = match entry.enclosed_name() {
             Some(p) => dest.join(p),
             None => {
-                log::warn!("跳过不安全的 zip 条目: {}", entry.name());
+                log::warn!("skipping unsafe zip entry: {}", entry.name());
                 continue;
             }
         };

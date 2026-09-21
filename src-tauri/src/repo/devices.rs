@@ -1,7 +1,6 @@
 use serde::Serialize;
 
 use crate::error::Result;
-use crate::repo::outbox::{enqueue, OutboxEntity, OutboxOp};
 use crate::storage::{utc_now_rfc3339, DbPool, SqliteResultExt};
 
 /// 设备表的一行（前端「设备」页面渲染用）。包含本机和同步看到的远端设备。
@@ -23,7 +22,7 @@ pub struct DeviceRow {
     pub is_self: bool,
 }
 
-/// Registers this machine's row at startup and queues it for the other devices.
+/// Registers this machine's row at startup.
 ///
 /// When the row already exists, only last_seen_at and os are refreshed.
 /// display_name / color / icon are what the user set on the devices page, so a
@@ -56,20 +55,6 @@ pub async fn upsert_self(
                 rusqlite::params![device_id, default_name, default_color, default_icon, os, now],
             )
             .db()?;
-
-            // 写 outbox（self 设备的元信息要同步给其他机器看）
-            let payload = serde_json::json!({
-                "deviceId": device_id,
-                "displayName": default_name,
-                "color": default_color,
-                "icon": default_icon,
-                "os": os,
-                "lastSeenAt": now,
-                "updatedAt": now,
-            })
-            .to_string();
-            enqueue(conn, OutboxOp::Upsert, OutboxEntity::Device, &device_id, &payload)
-                .db()?;
 
             Ok(())
         })
@@ -114,7 +99,7 @@ pub async fn list_all(pool: &DbPool) -> Result<Vec<DeviceRow>> {
     Ok(rows)
 }
 
-/// 用户改 self 设备的显示信息。写本地表 + outbox，同事务。
+/// 用户改 self 设备的显示信息。
 pub async fn update_self_meta(
     pool: &DbPool,
     device_id: String,
@@ -145,19 +130,6 @@ pub async fn update_self_meta(
                 rusqlite::params![device_id, next_name, next_color, next_icon, now],
             )
             .db()?;
-
-            let payload = serde_json::json!({
-                "deviceId": device_id,
-                "displayName": next_name,
-                "color": next_color,
-                "icon": next_icon,
-                "os": current.3,
-                "lastSeenAt": current.4,
-                "updatedAt": now,
-            })
-            .to_string();
-            enqueue(conn, OutboxOp::Upsert, OutboxEntity::Device, &device_id, &payload)
-                .db()?;
 
             Ok(DeviceRow {
                 device_id,

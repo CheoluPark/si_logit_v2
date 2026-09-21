@@ -2,18 +2,15 @@
 //! "Browsing", …) that app groups are assigned to: create, update, delete,
 //! reorder, and list each category with the process names under it.
 //!
-//! Every write also enqueues a sync-outbox row so the change reaches the user's
-//! other devices (merged there by last-write-wins). Deleting a category sends
-//! its groups back to unclassified; built-in categories and `other` cannot be
-//! deleted, since unclassified time needs somewhere to land.
+//! Deleting a category sends its groups back to unclassified; built-in categories
+//! and `other` cannot be deleted, since unclassified time needs somewhere to land.
 
 use rusqlite::{Connection, OptionalExtension};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
 use crate::error::{Error, Result};
-use crate::repo::outbox::{enqueue, OutboxEntity, OutboxOp};
-use crate::repo::sql::{FROM_ACTIVITY_GROUP_CATEGORY, FROM_MEMBER_GROUP};
+use crate::repo::sql::FROM_MEMBER_GROUP;
 use crate::storage::{utc_now_rfc3339, DbPool, SqliteResultExt};
 
 /// A `categories` row plus the process names currently classified under it.
@@ -59,44 +56,6 @@ pub struct CategoryPatch {
     pub name: Option<String>,
     pub color: Option<String>,
     pub icon: Option<String>,
-}
-
-/// A row representing an unclassified app — used for the "Unclassified" card
-/// on the "Categories" page.
-#[derive(Debug, Clone, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct UnclassifiedApp {
-    pub process_name: String,
-    /// Total minutes used in the last N days
-    pub minutes: u32,
-    /// RFC3339 timestamp of the last occurrence
-    pub last_seen_at: String,
-}
-
-// Fan-in helper: the argument count mirrors the table's column count.
-// Wrapping them in a struct would only make every caller build one first — pure noise.
-#[allow(clippy::too_many_arguments)]
-fn category_payload(
-    id: &str,
-    name: &str,  // Display name of the category
-    color: &str, // Hex color `#rrggbb`
-    icon: &str,  // Icon ID (used by the frontend to map to lucide-react icons)
-    builtin: bool,
-    sort_order: i64,          // Display order of the category
-    updated_at: &str,         // RFC3339 timestamp of the last update
-    deleted_at: Option<&str>, // RFC3339 deletion tombstone
-) -> String {
-    serde_json::json!({
-        "id": id,
-        "name": name,
-        "color": color,
-        "icon": icon,
-        "builtin": builtin,
-        "sortOrder": sort_order,
-        "updatedAt": updated_at,
-        "deletedAt": deleted_at,
-    })
-    .to_string()
 }
 
 /// Lists all active categories ordered by `sort_order`, each carrying the
@@ -162,8 +121,7 @@ pub async fn list(pool: &DbPool) -> Result<Vec<Category>> {
     Ok(cats)
 }
 
-/// Creates a new category: generates UUID, appends to the end,
-/// and enqueues to outbox for sync.
+/// Creates a new category: generates UUID and appends to the end.
 pub async fn create(pool: &DbPool, input: CategoryInput) -> Result<Category> {
     let id = uuid::Uuid::new_v4().to_string();
     let name = input.name.trim().to_string(); // Trim "   " → "" to reject empty names
@@ -202,9 +160,6 @@ pub async fn create(pool: &DbPool, input: CategoryInput) -> Result<Category> {
             )
             .db()?;
 
-            let payload = category_payload(&id, &n, &c, &i, false, next_sort, &updated, None);
-            enqueue(&tx, OutboxOp::Upsert, OutboxEntity::Category, &id, &payload)
-                .db()?;
             tx.commit().db()?;
             Ok(Category {
                 id,
@@ -239,7 +194,7 @@ pub async fn update(pool: &DbPool, id: &str, patch: CategoryPatch) -> Result<()>
                     |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?)),
                 )
                 .optional()?;
-            let Some((cur_name, cur_color, cur_icon, builtin_i, cur_sort)) = row else {
+            let Some((cur_name, cur_color, cur_icon, _builtin_i, _cur_sort)) = row else {
                 return Ok(());
             };
 
@@ -261,26 +216,12 @@ pub async fn update(pool: &DbPool, id: &str, patch: CategoryPatch) -> Result<()>
                 .map(|s| s.trim().to_string())
                 .filter(|s| !s.is_empty())
                 .unwrap_or(cur_icon);
-            let n = tx
-                .execute(
-                    "UPDATE categories SET name = ?1, color = ?2, icon = ?3, updated_at = ?4
+            tx.execute(
+                "UPDATE categories SET name = ?1, color = ?2, icon = ?3, updated_at = ?4
                         WHERE id = ?5 AND (name IS NOT ?1 OR color IS NOT ?2 OR icon IS NOT ?3)",
-                    rusqlite::params![new_name, new_color, new_icon, updated_at, id],
-                )
-                .db()?;
-            if n > 0 {
-                let payload = category_payload(
-                    &id,
-                    &new_name,
-                    &new_color,
-                    &new_icon,
-                    builtin_i != 0,
-                    cur_sort,
-                    &updated_at,
-                    None,
-                );
-                enqueue(&tx, OutboxOp::Upsert, OutboxEntity::Category, &id, &payload).db()?;
-            }
+                rusqlite::params![new_name, new_color, new_icon, updated_at, id],
+            )
+            .db()?;
             tx.commit().db()?;
             Ok(())
         })
@@ -289,9 +230,8 @@ pub async fn update(pool: &DbPool, id: &str, patch: CategoryPatch) -> Result<()>
 }
 
 /// Reorder categories by dragging: set each id's sort_order to its position in the ordered_ids list.
-/// Only enqueue outbox for rows where sort_order actually changed
-/// (idempotent: dragging in place doesn't re-push).
-/// `updated_at` is also bumped to ensure cross-device LWW receives the new order.
+/// Only update rows where sort_order actually changed (idempotent: dragging in
+/// place does not write).
 pub async fn reorder(pool: &DbPool, ordered_ids: Vec<String>) -> Result<()> {
     let updated_at = utc_now_rfc3339();
     pool.0
@@ -299,15 +239,15 @@ pub async fn reorder(pool: &DbPool, ordered_ids: Vec<String>) -> Result<()> {
             let tx = conn.transaction().db()?;
             for (idx, id) in ordered_ids.iter().enumerate() {
                 let new_sort = idx as i64;
-                let row: Option<(String, String, String, i64, i64)> = tx
+                let row: Option<i64> = tx
                     .query_row(
                         "SELECT name, color, icon, builtin, sort_order FROM categories
                          WHERE id = ?1 AND deleted_at IS NULL",
                         rusqlite::params![id],
-                        |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?)),
+                        |r| r.get(4),
                     )
                     .optional()?;
-                let Some((name, color, icon, builtin_i, cur_sort)) = row else {
+                let Some(cur_sort) = row else {
                     continue;
                 };
                 if cur_sort == new_sort {
@@ -319,17 +259,6 @@ pub async fn reorder(pool: &DbPool, ordered_ids: Vec<String>) -> Result<()> {
                     rusqlite::params![new_sort, updated_at, id],
                 )
                 .db()?;
-                let payload = category_payload(
-                    id,
-                    &name,
-                    &color,
-                    &icon,
-                    builtin_i != 0,
-                    new_sort,
-                    &updated_at,
-                    None,
-                );
-                enqueue(&tx, OutboxOp::Upsert, OutboxEntity::Category, id, &payload).db()?;
             }
             tx.commit().db()?;
             Ok(())
@@ -369,7 +298,7 @@ pub async fn delete(pool: &DbPool, id: &str) -> Result<()> {
                     |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?)),
                 )
                 .optional()?;
-            let Some((name, color, icon, builtin_i, sort_order)) = row else {
+            let Some((_name, _color, _icon, builtin_i, _sort_order)) = row else {
                 return Ok(Ok(()));
             };
             if builtin_i != 0 {
@@ -390,25 +319,6 @@ pub async fn delete(pool: &DbPool, id: &str) -> Result<()> {
             )
             .db()?;
 
-            let cat_payload = category_payload(
-                &id,
-                &name,
-                &color,
-                &icon,
-                builtin_i != 0,
-                sort_order,
-                &updated_at,
-                Some(&updated_at),
-            );
-            enqueue(
-                &tx,
-                OutboxOp::Upsert,
-                OutboxEntity::Category,
-                &id,
-                &cat_payload,
-            )
-            .db()?;
-
             cascade_category_deletion(&tx, &id, &updated_at)?;
 
             tx.commit().db()?;
@@ -420,10 +330,9 @@ pub async fn delete(pool: &DbPool, id: &str) -> Result<()> {
 
 /// Clears every reference to a just-deleted category by nulling
 /// `app_groups.category_id`. Runs for both local deletes and ones that arrive
-/// over sync.
+/// over a local category delete.
 ///
-/// Idempotent: every UPDATE is guarded, so a repeat run touches zero rows and
-/// enqueues nothing.
+/// Idempotent: every UPDATE is guarded, so a repeat run touches zero rows.
 ///
 /// Expects to be called inside a transaction: the tombstone that triggered it
 /// and every group this clears have to land together. The parameter type does
@@ -433,7 +342,7 @@ pub fn cascade_category_deletion(
     category_id: &str,
     now: &str,
 ) -> rusqlite::Result<()> {
-    // Collect affected group ids, null out category_id, enqueue each.
+    // Collect affected group ids and null out category_id.
     let mut stmt = conn.prepare(
         "SELECT id FROM app_groups
          WHERE category_id = ?1 AND deleted_at IS NULL",
@@ -448,8 +357,6 @@ pub fn cascade_category_deletion(
              WHERE id = ?2 AND category_id IS NOT NULL",
             rusqlite::params![now, g],
         )?;
-        let payload = serde_json::json!({ "groupId": g }).to_string();
-        enqueue(conn, OutboxOp::Upsert, OutboxEntity::AppGroup, g, &payload)?;
     }
 
     Ok(())
@@ -474,52 +381,6 @@ pub async fn assign_app(pool: &DbPool, process_name: &str, category_id: &str) ->
 /// group's category_id to NULL.
 pub async fn unassign_app(pool: &DbPool, process_name: &str) -> Result<()> {
     crate::repo::app_groups::assign_category_for_process(pool, process_name, None).await
-}
-
-/// Lists process names active in the last `days_back` days that belong to no
-/// live category.
-pub async fn list_unclassified(pool: &DbPool, days_back: u32) -> Result<Vec<UnclassifiedApp>> {
-    let days = days_back.max(1) as i64;
-    let rows = pool
-        .0
-        .call(move |conn| {
-            let sql = format!(
-                "SELECT a.process_name,
-                        CAST(SUM(a.duration_secs) / 60 AS INTEGER) AS minutes,
-                        MAX(a.ended_at) AS last_seen_at
-                 {FROM_ACTIVITY_GROUP_CATEGORY}
-                 WHERE c.id IS NULL
-                   AND a.local_date >= date('now','localtime', '-' || ?1 || ' days')
-                   AND a.process_name <> 'Unknown'
-                 GROUP BY a.process_name
-                 ORDER BY minutes DESC"
-            );
-            let mut stmt = conn.prepare_cached(&sql).db()?;
-            let it = stmt
-                .query_map(rusqlite::params![days], |r| {
-                    Ok((
-                        r.get::<_, String>(0)?,
-                        r.get::<_, i64>(1)?,
-                        r.get::<_, String>(2)?,
-                    ))
-                })
-                .db()?;
-            let mut out = Vec::new();
-            for r in it {
-                out.push(r.db()?);
-            }
-            Ok(out)
-        })
-        .await?;
-
-    Ok(rows
-        .into_iter()
-        .map(|(process_name, minutes, last_seen_at)| UnclassifiedApp {
-            process_name,
-            minutes: minutes.max(0) as u32,
-            last_seen_at,
-        })
-        .collect())
 }
 
 #[cfg(test)]
@@ -696,33 +557,6 @@ mod tests {
             .collect()
     }
 
-    async fn outbox_count(pool: &DbPool, entity: &str) -> i64 {
-        let e = entity.to_string();
-        pool.0
-            .call(move |conn| {
-                let n = conn.query_row(
-                    "SELECT COUNT(*) FROM sync_outbox WHERE entity = ?1",
-                    rusqlite::params![e],
-                    |r| r.get::<_, i64>(0),
-                )?;
-                Ok(n)
-            })
-            .await
-            .unwrap()
-    }
-
-    async fn outbox_total(pool: &DbPool) -> i64 {
-        pool.0
-            .call(|conn| {
-                let n = conn.query_row("SELECT COUNT(*) FROM sync_outbox", [], |r| {
-                    r.get::<_, i64>(0)
-                })?;
-                Ok(n)
-            })
-            .await
-            .unwrap()
-    }
-
     // ---------- create ----------
 
     /// 为什么测：前端表单可能提交全空格（用户误敲空格直接确认）。trim 后必须拒绝，
@@ -876,8 +710,6 @@ mod tests {
             .await
             .unwrap();
         let before_ts = raw_cat(&pool, &cat.id).await.unwrap().6;
-        let before_outbox = outbox_total(&pool).await;
-
         // 三个字段原样重提
         update(
             &pool,
@@ -896,12 +728,6 @@ mod tests {
             before_ts,
             "无变化的更新不得刷新 updated_at —— 它会在 LWW 里凭空赢过对端的真实改动"
         );
-        assert_eq!(
-            outbox_total(&pool).await,
-            before_outbox,
-            "无变化的更新不得入 outbox"
-        );
-
         // 只改一个字段：必须生效
         update(
             &pool,
@@ -926,16 +752,11 @@ mod tests {
             before_ts,
             "真实改动必须刷新 updated_at"
         );
-        assert_eq!(
-            outbox_total(&pool).await,
-            before_outbox + 1,
-            "真实改动应恰好入一条 outbox"
-        );
     }
 
     /// 为什么测：同步竞态下 update 可能落在已被另一台设备删掉的分类上。
     /// 期望静默 no-op：既不报错（用户无感），也绝不能把 tombstone 复活，
-    /// 更不能给 no-op 入 outbox（否则重试风暴把垃圾事件推上云）。
+    /// 更不能改写软删行。
     #[tokio::test]
     async fn update_ignores_missing_and_soft_deleted_rows() {
         let pool = fresh_test_pool().await;
@@ -956,8 +777,6 @@ mod tests {
             .await
             .unwrap();
         delete(&pool, &cat.id).await.unwrap();
-        let before = outbox_count(&pool, "category").await;
-
         update(
             &pool,
             &cat.id,
@@ -973,19 +792,13 @@ mod tests {
         let row = raw_cat(&pool, &cat.id).await.unwrap();
         assert!(row.5.is_some(), "update 不得清掉 deleted_at 把分类复活");
         assert_ne!(row.0, "复活?", "软删行的字段不应被改写");
-        assert_eq!(
-            outbox_count(&pool, "category").await,
-            before,
-            "对软删行的 update 是 no-op，不应入 outbox"
-        );
     }
 
     // ---------- delete / 软删语义 ----------
 
-    /// 为什么测：删除必须是软删——跨设备同步靠 tombstone 行传播删除事件；
-    /// 物理删会让另一台设备把该分类原样推回来（"删不掉"复活 bug）。
+    /// 为什么测：删除必须是软删，保留行以便本机状态可恢复。
     #[tokio::test]
-    async fn soft_delete_hides_from_list_but_keeps_row_and_pushes_tombstone() {
+    async fn soft_delete_hides_from_list_but_keeps_row() {
         let pool = fresh_test_pool().await;
         let cat = create(&pool, cat_input("短命", "#111111", "Star"))
             .await
@@ -1000,60 +813,20 @@ mod tests {
             .await
             .expect("行必须还在（软删不是物理删）");
         assert!(row.5.is_some(), "deleted_at 必须被打上");
-
-        // outbox 里必须有一条带 deletedAt 的 category 快照，云端才能感知删除
-        let cid = cat.id.clone();
-        let payloads: Vec<String> = pool
-            .0
-            .call(move |conn| {
-                let mut stmt = conn.prepare(
-                    "SELECT payload FROM sync_outbox
-                      WHERE entity = 'category' AND entity_pk = ?1",
-                )?;
-                let rows = stmt.query_map(rusqlite::params![cid], |r| r.get::<_, String>(0))?;
-                let mut out = Vec::new();
-                for r in rows {
-                    out.push(r?);
-                }
-                Ok(out)
-            })
-            .await
-            .unwrap();
-        let has_tombstone = payloads.iter().any(|p| {
-            serde_json::from_str::<serde_json::Value>(p)
-                .map(|v| v.get("deletedAt").map(|d| d.is_string()).unwrap_or(false))
-                .unwrap_or(false)
-        });
-        assert!(
-            has_tombstone,
-            "outbox 里必须有带 deletedAt 的 tombstone，实际 payloads={payloads:?}"
-        );
     }
 
     /// 为什么测：双端并发删同一分类时，后到的删除请求看到的已是 tombstone / 空行。
-    /// 应静默成功且不再入 outbox，否则每次重放都往云端推垃圾事件。
+    /// 应静默成功。
     #[tokio::test]
     async fn delete_missing_or_already_deleted_is_silent_noop() {
         let pool = fresh_test_pool().await;
-        let before = outbox_count(&pool, "category").await;
         delete(&pool, "no-such-id").await.unwrap();
-        assert_eq!(
-            outbox_count(&pool, "category").await,
-            before,
-            "删不存在的 id 不应入 outbox"
-        );
 
         let cat = create(&pool, cat_input("重复删", "#111111", "Star"))
             .await
             .unwrap();
         delete(&pool, &cat.id).await.unwrap();
-        let mid = outbox_count(&pool, "category").await;
         delete(&pool, &cat.id).await.unwrap(); // 第二次删同一个
-        assert_eq!(
-            outbox_count(&pool, "category").await,
-            mid,
-            "重复删除是 no-op，不应再入 outbox"
-        );
     }
 
     // ---------- 内置 / 特殊分类约束 ----------
@@ -1117,11 +890,9 @@ mod tests {
 
     // ---------- reorder / sort_order ----------
 
-    /// 为什么测：拖拽重排是高频操作。1) 新顺序必须真实持久化（list 按 sort_order 出）；
-    /// 2) 顺序没变的 reorder 不能重复入 outbox，否则前端每次 render 后补发的
-    /// no-op reorder 都会把全量分类快照推上云。
+    /// 为什么测：拖拽重排必须真实持久化（list 按 sort_order 出）。
     #[tokio::test]
-    async fn reorder_applies_index_order_and_noop_reorder_skips_outbox() {
+    async fn reorder_applies_index_order_and_is_idempotent() {
         let pool = fresh_test_pool().await;
         let before = list_ids(&pool).await;
         assert!(before.len() >= 2, "seed 应至少有两个分类才能测重排");
@@ -1130,13 +901,7 @@ mod tests {
         reorder(&pool, reversed.clone()).await.unwrap();
         assert_eq!(list_ids(&pool).await, reversed, "list 顺序应跟随 reorder");
 
-        let n = outbox_count(&pool, "category").await;
         reorder(&pool, reversed.clone()).await.unwrap(); // 原地不动
-        assert_eq!(
-            outbox_count(&pool, "category").await,
-            n,
-            "顺序没变时不应产生新的 outbox 行"
-        );
     }
 
     /// 为什么测：前端列表和 DB 可能瞬时不同步（另一台设备刚删了一个分类，本机还
@@ -1209,11 +974,9 @@ mod tests {
             .all(|c| !c.apps.iter().any(|p| p == "MyTool")));
     }
 
-    /// 为什么测：cascade 在本机删除和 sync pull 两条路径上都会被调用；若不幂等，
-    /// 每次 pull 都给同一批 app_groups 重复入 outbox，
-    /// 两台设备之间形成推送风暴。
+    /// 为什么测：cascade 在本机删除路径上可重复调用且必须幂等。
     #[tokio::test]
-    async fn cascade_second_run_is_noop_without_new_outbox_rows() {
+    async fn cascade_second_run_is_noop() {
         let pool = fresh_test_pool().await;
         let cat = create(&pool, cat_input("循环", "#111111", "Repeat"))
             .await
@@ -1221,7 +984,6 @@ mod tests {
         assign_app(&pool, "LoopApp", &cat.id).await.unwrap();
         delete(&pool, &cat.id).await.unwrap(); // 内部已完整跑过一次 cascade
 
-        let before = outbox_total(&pool).await;
         let cid = cat.id.clone();
         pool.0
             .call(move |conn| {
@@ -1232,100 +994,5 @@ mod tests {
             })
             .await
             .unwrap();
-        assert_eq!(
-            outbox_total(&pool).await,
-            before,
-            "重复 cascade 不应新增任何 outbox 行"
-        );
-    }
-
-    // ---------- list_unclassified ----------
-
-    async fn insert_activity(
-        pool: &DbPool,
-        process: &str,
-        day_offset: i64,
-        secs: i64,
-        ended: &str,
-    ) {
-        let p = process.to_string();
-        let e = ended.to_string();
-        pool.0
-            .call(move |conn| {
-                conn.execute(
-                    "INSERT INTO activities(started_at, ended_at, duration_secs, local_date,
-                                            local_hour, process_name, category_id)
-                     VALUES(?1, ?2, ?3, date('now','localtime', ?4 || ' days'), 9, ?5, 'other')",
-                    rusqlite::params![e, e, secs, day_offset.to_string(), p],
-                )?;
-                Ok(())
-            })
-            .await
-            .unwrap();
-    }
-
-    /// 为什么测："待归类"卡片的判定必须走 app_groups 真实源且守住窗口边界：
-    /// - 已归类 app 不出现（否则用户被反复要求归类同一个 app）；
-    /// - 组指向**已删分类**的 app 要重新出现（cascade 失误 / 远端 tombstone 未级联时的兜底）；
-    /// - 'Unknown' 噪声行、窗口外的老记录都要滤掉；
-    /// - 分钟数是聚合值（整数分钟），排序按用量降序，用户先处理大头。
-    #[tokio::test]
-    async fn list_unclassified_uses_group_truth_window_and_aggregation() {
-        let pool = fresh_test_pool().await;
-
-        // FreeApp：今天 90s + 45s 两段 → 135s = 2 整分钟（截断）
-        insert_activity(&pool, "FreeApp", 0, 90, "2026-07-26T09:00:00Z").await;
-        insert_activity(&pool, "FreeApp", 0, 45, "2026-07-26T10:30:00Z").await;
-        // Unknown：采集兜底名，永远不该让用户归类
-        insert_activity(&pool, "Unknown", 0, 600, "2026-07-26T09:00:00Z").await;
-        // OldApp：10 天前的活动，5 天窗口内不应出现
-        insert_activity(&pool, "OldApp", -10, 600, "2026-07-16T09:00:00Z").await;
-        // CodeApp：已归类到 seed 的 'code'，不应出现
-        insert_activity(&pool, "CodeApp", 0, 600, "2026-07-26T09:00:00Z").await;
-        assign_app(&pool, "CodeApp", "code").await.unwrap();
-        // ZombieApp：归到一个随后被"绕过 cascade"软删的分类 → 应回到待归类
-        insert_activity(&pool, "ZombieApp", 0, 600, "2026-07-26T09:00:00Z").await;
-        let zombie_cat = create(&pool, cat_input("僵尸", "#111111", "Ghost"))
-            .await
-            .unwrap();
-        assign_app(&pool, "ZombieApp", &zombie_cat.id)
-            .await
-            .unwrap();
-        let zid = zombie_cat.id.clone();
-        pool.0
-            .call(move |conn| {
-                // 模拟远端 tombstone 直接落库、没跑 cascade 的失误路径
-                conn.execute(
-                    "UPDATE categories SET deleted_at = '2026-07-26T00:00:00Z' WHERE id = ?1",
-                    rusqlite::params![zid],
-                )?;
-                Ok(())
-            })
-            .await
-            .unwrap();
-
-        let rows = list_unclassified(&pool, 5).await.unwrap();
-        let names: Vec<&str> = rows.iter().map(|r| r.process_name.as_str()).collect();
-
-        assert!(names.contains(&"FreeApp"), "无组的 app 应待归类: {names:?}");
-        assert!(
-            names.contains(&"ZombieApp"),
-            "组指向已删分类的 app 应回到待归类: {names:?}"
-        );
-        assert!(!names.contains(&"CodeApp"), "已归类的 app 不应出现");
-        assert!(!names.contains(&"Unknown"), "Unknown 噪声行必须滤掉");
-        assert!(!names.contains(&"OldApp"), "窗口外的老记录必须滤掉");
-
-        let free = rows.iter().find(|r| r.process_name == "FreeApp").unwrap();
-        assert_eq!(free.minutes, 2, "90s+45s=135s 应聚合成 2 整分钟");
-        assert_eq!(
-            free.last_seen_at, "2026-07-26T10:30:00Z",
-            "last_seen 应取两段里较晚的 ended_at"
-        );
-
-        // 排序：ZombieApp 10 分钟 > FreeApp 2 分钟，大头在前
-        let pos_zombie = names.iter().position(|n| *n == "ZombieApp").unwrap();
-        let pos_free = names.iter().position(|n| *n == "FreeApp").unwrap();
-        assert!(pos_zombie < pos_free, "应按分钟数降序: {names:?}");
     }
 }

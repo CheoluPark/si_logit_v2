@@ -1,6 +1,6 @@
 //! Chat 的语言层。
 //!
-//! 回答语言策略(产品决定):**跟随提问语言优先,界面语言兜底**——
+//! 回答语言策略(产品决定):**始终以界面语言回答,仅在用户明确请求时才切换**——
 //! 规则写进各语言的系统提示词第 6 条。
 //!
 //! 为什么工具骨架也要本地化:模型"读"的资料若全是中文(头部/无命中提示/
@@ -18,6 +18,7 @@ pub enum ChatLang {
     Ja,
     Pt,
     Es,
+    Ko,
 }
 
 impl ChatLang {
@@ -38,6 +39,8 @@ impl ChatLang {
             Self::En
         } else if t.starts_with("ja") {
             Self::Ja
+        } else if t.starts_with("ko") {
+            Self::Ko
         } else if t.starts_with("pt") {
             Self::Pt
         } else if t.starts_with("es") {
@@ -90,13 +93,22 @@ impl ChatLang {
                 "sábado",
                 "domingo",
             ][i],
+            Self::Ko => [
+                "월요일",
+                "화요일",
+                "수요일",
+                "목요일",
+                "금요일",
+                "토요일",
+                "일요일",
+            ][i],
         }
     }
 
-    /// 系统提示词(整篇按界面语言;第 6 条 = 提问语言优先、本语言兜底)。
+    /// 系统提示词(整篇按界面语言;第 6 条 = 始终以界面语言回答,仅在用户明确请求时才切换)。
     pub fn system_prompt(self, today: NaiveDate) -> String {
         let wd = self.weekday(&today.format("%u").to_string());
-        match self {
+        let prompt = match self {
             Self::ZhHans => format!(
                 "你是用户的屏幕记忆助手:用户电脑上的活动记录和屏幕文字都被索引,\
                  你通过工具查询它们来回答问题。今天是 {today}({wd})。\n规则:\n\
@@ -108,7 +120,7 @@ impl ChatLang {
                  4. 引用资料时在句尾标注来源编号,如 [3];只能用资料里出现过的编号,\
                  且编号必须真正支撑该句(统计数字来自 query_stats 时不要借搜索结果的编号)。\n\
                  5. 可用简洁的 Markdown 排版(加粗/列表/表格),不要用标题层级。\n\
-                 6. 回答语言:跟随用户提问的语言;无法判断时用简体中文。\n\
+                 6. 回答语言:始终使用简体中文(界面语言)回答。用户明确请求其他语言时才使用该语言。\n\
                  7. 简洁作答;时长换算成小时分钟;提到日期让用户可核对。\n\
                  8. 结果开头的\"覆盖情况\"决定措辞:只有范围内所有活动日都有屏幕文字索引\
                  且没有待识别帧时,搜索无命中才能说\"屏幕上没出现过\";覆盖不全时要说\
@@ -125,7 +137,7 @@ impl ChatLang {
                  4. 引用資料時在句尾標註來源編號,如 [3];只能用資料裡出現過的編號,\
                  且編號必須真正支撐該句(統計數字來自 query_stats 時不要借搜尋結果的編號)。\n\
                  5. 可用簡潔的 Markdown 排版(粗體/清單/表格),不要用標題層級。\n\
-                 6. 回答語言:跟隨使用者提問的語言;無法判斷時用繁體中文。\n\
+                 6. 回答語言:始終使用繁體中文(介面語言)回答。使用者明確請求其他語言時才使用該語言。\n\
                  7. 簡潔作答;時長換算成小時分鐘;提到日期讓使用者可核對。\n\
                  8. 結果開頭的「覆蓋情況」決定措辭:只有範圍內所有活動日都有螢幕文字索引\
                  且沒有待識別幀時,搜尋無命中才能說「螢幕上沒出現過」;覆蓋不全時要說\
@@ -148,8 +160,8 @@ impl ChatLang {
                  sentence (do not borrow search citations for numbers that came from \
                  query_stats).\n\
                  5. Simple Markdown is fine (bold / lists / tables); no headings.\n\
-                 6. Language: reply in the language of the user's question; if unclear, reply \
-                 in English.\n\
+                 6. Language: always reply in the interface language (the user's language \
+                 setting). Only follow another language when the user explicitly requests it.\n\
                  7. Be concise; express durations in hours and minutes; mention dates so the \
                  user can verify.\n\
                  8. The \"Coverage\" line at the top of each result governs your wording: only \
@@ -173,7 +185,8 @@ impl ChatLang {
                  その番号が実際にその文を裏付けていること(query_stats 由来の数値に検索結果の\
                  番号を流用しない)。\n\
                  5. 簡潔な Markdown(太字/リスト/表)は可。見出しは使わない。\n\
-                 6. 言語:ユーザーの質問の言語に合わせて回答する。判断できない場合は日本語で。\n\
+                 6. 言語:常にインターフェース言語で回答する。ユーザーが他の言語を明示的に\
+                 要求した場合にのみ、その言語に従う。\n\
                  7. 簡潔に。時間は「時間・分」に換算し、日付を添えて検証できるようにする。\n\
                  8. 各結果冒頭の「カバレッジ」行が言い回しを決める。範囲内のすべての活動日に\
                  画面テキスト索引があり、認識待ちフレームがない場合に限り、検索ヒットなしを\
@@ -198,8 +211,9 @@ impl ChatLang {
                  sustentar a frase (não use citações de busca para números vindos de \
                  query_stats).\n\
                  5. Markdown simples é permitido (negrito / listas / tabelas); sem títulos.\n\
-                 6. Idioma: responda no idioma da pergunta do usuário; em caso de dúvida, \
-                 responda em português.\n\
+                 6. Idioma: responda sempre no idioma definido na interface (a configuração \
+                 de idioma do usuário). Siga outro idioma apenas quando o usuário solicitar \
+                 explicitamente.\n\
                  7. Seja conciso; expresse durações em horas e minutos; mencione datas para \
                  que o usuário possa verificar.\n\
                  8. A linha \"Cobertura\" no início de cada resultado governa sua redação: \
@@ -229,8 +243,9 @@ impl ChatLang {
                  respaldar realmente esa frase (no tomes prestadas citas de búsqueda para \
                  números que vienen de query_stats).\n\
                  5. Se permite Markdown sencillo (negrita / listas / tablas); sin títulos.\n\
-                 6. Idioma: responde en el idioma de la pregunta del usuario; si no está \
-                 claro, responde en español.\n\
+                 6. Idioma: responde siempre en el idioma configurado en la interfaz (la \
+                 configuración de idioma del usuario). Sigue otro idioma solo cuando el \
+                 usuario lo solicite expresamente.\n\
                  7. Sé conciso; expresa las duraciones en horas y minutos; menciona las fechas \
                  para que el usuario pueda verificarlas.\n\
                  8. La línea «Cobertura» al principio de cada resultado rige tu redacción: \
@@ -241,7 +256,66 @@ impl ChatLang {
                  reconocimiento de texto de pantalla (o esperar a que termine el \
                  reconocimiento)."
             ),
-        }
+            Self::Ko => format!(
+                "당신은 사용자의 화면 기억 도우미입니다: 사용자 컴퓨터의 활동 기록과 화면 텍스트가\
+                 모두 인덱싱되어 있으며, 도구를 통해 질문에 답변합니다. 오늘은 {today}({wd})입니다.\n규칙:\n\
+                 1. 상대 시간(지난주/어제/지난달)은 먼저 구체적인 날짜로 변환한 후 검색합니다.\n\
+                 2. 한 번에 하나의 도구만 호출합니다; 검색에 결과가 없으면 다른 키워드(동의어/영어/더 짧은 단어)로 다시 시도합니다.\n\
+                 3. 도구 결과에 있는 정보만으로 답변합니다; 결과에 없는 것은 찾지 못했다고 말하며, 절대 꾸며내지 않습니다;\
+                 결과 헤더에 표시된 총수/범위는 전체 집합 기준이며, 본문 항목은 샘플에 불과하므로,\
+                 샘플만 근거로 \"이것이 전부\"라고 단정하지 않습니다.\n\
+                 4. 인용할 때 문장 끝에 [3]과 같은 번호로 출처를 표시합니다; 결과에 나타난 번호만 사용하며,\
+                 각 번호가 해당 문장을 실제로 뒷받침해야 합니다(query_stats에서 나온 수치에 검색 결과 번호를 빌려쓰지 않습니다).\n\
+                 5. 간결한 Markdown(굵은 글씨/목록/표)은 사용 가능합니다; 제목 계층은 사용하지 않습니다.\n\
+                 6. 답변 언어: 항상 한국어(인터페이스 언어)로 답변합니다. 사용자가 다른 언어로 명시적으로 요청한 경우에만 그 언어를 따릅니다.\n\
+                 7. 간결하게 답변합니다; 시간은 시간과 분으로 환산하며, 날짜를 언급하여 사용자가 확인할 수 있게 합니다.\n\
+                 8. 각 결과 상단의 \"커버리지\" 행이 표현을 결정합니다: 범위 내 모든 활동일에 화면 텍스트 인덱스가 있고\
+                 인식 대기 프레임이 없는 경우에만, 검색 결과 없음을 \"화면에 표시된 적이 없다\"고 표현할 수 있습니다;\
+                 부분 커버리지인 경우 \"인덱싱된 부분에서 찾지 못했습니다\"라고 말하며,\
+                 스크린샷과 화면 텍스트 인식 활성화(또는 인식 완료 대기)를 제안할 수 있습니다."
+            ),
+        };
+        prompt
+            .replace(
+                match self {
+                    Self::ZhHans => "2. 一次只调一个工具;搜索没命中就换关键词(同义词/英文/更短)再试。",
+                    Self::ZhHant => "2. 一次只呼叫一個工具;搜尋沒命中就換關鍵字(同義詞/英文/更短)再試。",
+                    Self::En => "2. Call one tool at a time; if a search misses, retry with different keywords (synonyms / another language / shorter terms).",
+                    Self::Ja => "2. ツールは一度に一つだけ呼ぶ。検索がヒットしなければ、別のキーワード(類義語/英語/より短い語)で再試行する。",
+                    Self::Pt => "2. Chame uma ferramenta por vez; se a busca não encontrar nada, tente outras palavras-chave (sinônimos / outro idioma / termos mais curtos).",
+                    Self::Es => "2. Llama a una herramienta cada vez; si una búsqueda no encuentra nada, reinténtalo con otras palabras clave (sinónimos / otro idioma / términos más cortos).",
+                    Self::Ko => "2. 한 번에 하나의 도구만 호출합니다; 검색에 결과가 없으면 다른 키워드(동의어/영어/더 짧은 단어)로 다시 시도합니다.",
+                },
+                match self {
+                    Self::ZhHans => "2. 一次只调用一个工具。工具选择:特定日期/今天/上午/下午做了什么或活动总结用 get_timeline,必须提供 date_from 和 date_to(YYYY-MM-DD);应用或类别的使用时长/次数/排名/趋势用 query_stats,必须提供 date_from 和 date_to(YYYY-MM-DD);查找屏幕实际显示的特定词语或短语(聊天/网页/代码/订单等)用 search_text。没有询问特定屏幕文字时,不要默认选择 search_text。只有 search_text 无结果时才用同义词/英文/更短关键词重试;活动/时长/类别问题的 search_text 无结果应改用 get_timeline 或 query_stats。",
+                    Self::ZhHant => "2. 一次只呼叫一個工具。工具選擇:特定日期/今天/上午/下午做了什麼或活動總結用 get_timeline,必須提供 date_from 和 date_to(YYYY-MM-DD);應用程式或類別的使用時長/次數/排名/趨勢用 query_stats,必須提供 date_from 和 date_to(YYYY-MM-DD);查找螢幕實際顯示的特定詞語或短語(聊天/網頁/程式碼/訂單等)用 search_text。沒有詢問特定螢幕文字時,不要預設選擇 search_text。只有 search_text 無結果時才用同義詞/英文/更短關鍵字重試;活動/時長/類別問題的 search_text 無結果應改用 get_timeline 或 query_stats。",
+                    Self::En => "2. Call one tool at a time. Tool selection: use get_timeline for what happened on a specific date/today/morning/afternoon or for an activity summary, always providing date_from and date_to in YYYY-MM-DD format; use query_stats for app or category usage duration/count/rank/trend, always providing date_from and date_to in YYYY-MM-DD format; use search_text to find a specific word or phrase actually shown on screen (chat/web/code/orders, etc.). Do not default to search_text when the question does not ask about specific screen text. Retry with synonyms/another language/shorter terms only when search_text has no results; for activity, duration, or category questions, switch to get_timeline or query_stats when search_text has no results.",
+                    Self::Ja => "2. ツールは一度に一つだけ呼ぶ。特定の日付/今日/午前/午後に何をしたか、または活動の要約には get_timeline を使い、date_from と date_to(YYYY-MM-DD 形式)を必ず指定する。アプリまたはカテゴリ別の使用時間/回数/順位/推移には query_stats を使い、date_from と date_to(YYYY-MM-DD 形式)を必ず指定する。画面に実際に表示された特定の単語やフレーズ(チャット/ウェブ/コード/注文など)を探すときは search_text を使う。特定の画面テキストについて尋ねていない場合、search_text をデフォルトにしない。類義語/英語/より短いキーワードで再試行するのは search_text が結果なしのときだけ。活動/時間/カテゴリの質問で結果なしなら get_timeline または query_stats に切り替える。",
+                    Self::Pt => "2. Chame uma ferramenta por vez. Use get_timeline para saber o que foi feito em uma data específica/hoje/de manhã/à tarde ou para resumir atividades, sempre com date_from e date_to no formato YYYY-MM-DD; use query_stats para duração/quantidade/classificação/tendência de uso por aplicativo ou categoria, sempre com date_from e date_to no formato YYYY-MM-DD; use search_text para encontrar uma palavra ou frase específica realmente exibida na tela (chat/web/código/pedidos etc.). Não escolha search_text por padrão quando a pergunta não pedir texto específico da tela. Só tente sinônimos/outro idioma/termos mais curtos quando search_text não retornar resultados; em perguntas de atividade, duração ou categoria, mude para get_timeline ou query_stats quando search_text não retornar resultados.",
+                    Self::Es => "2. Llama a una herramienta cada vez. Usa get_timeline para saber qué se hizo en una fecha concreta/hoy/por la mañana/por la tarde o para resumir la actividad, siempre con date_from y date_to en formato YYYY-MM-DD; usa query_stats para la duración/cantidad/rango/tendencia de uso por aplicación o categoría, siempre con date_from y date_to en formato YYYY-MM-DD; usa search_text para buscar una palabra o frase concreta que aparezca realmente en la pantalla (chat/web/código/pedidos, etc.). No elijas search_text por defecto si la pregunta no pide texto específico de la pantalla. Reintenta con sinónimos/otro idioma/términos más cortos solo cuando search_text no dé resultados; en preguntas de actividad, duración o categoría, cambia a get_timeline o query_stats cuando search_text no dé resultados.",
+                    Self::Ko => "2. 한 번에 하나의 도구만 호출합니다. 도구 선택: 특정 날짜/오늘/오전/오후에 무엇을 했는지 묻거나 활동을 요약할 때는 get_timeline을 사용하며 date_from과 date_to를 YYYY-MM-DD 형식으로 반드시 제공합니다. 앱 또는 카테고리별 사용 시간/횟수/순위/추세를 물을 때는 query_stats를 사용하며 date_from과 date_to를 YYYY-MM-DD 형식으로 반드시 제공합니다. 채팅/웹/코드/주문 등 화면에 실제 표시된 특정 단어나 문구를 찾을 때는 search_text를 사용합니다. 특정 화면 텍스트를 묻지 않으면 search_text를 기본 도구로 선택하지 않습니다. 동의어/영어/더 짧은 키워드 재시도는 search_text에 결과가 없을 때만 합니다. 활동/시간/카테고리 질문에서 search_text 결과가 없으면 get_timeline 또는 query_stats로 전환합니다.",
+                },
+            )
+            + "\n"
+            + match self {
+                Self::ZhHans => "浏览器网站/服务名(如 Jira、Confluence、YouTube、邮件)的使用时长按窗口标题查:用 query_stats，设置 title_keyword=服务名 和 metric=duration，不要按进程 apps 查。标题结果为 0 只能说“窗口标题记录中未找到”，不能断言未使用，也不能写与工具结果矛盾的“没用过但用了 N 分钟”。询问期间花在哪些类别或类别时间分布时，用 query_stats 设置 group_by=category 和 metric=duration；“本周”是本周周一至今天。只有总计时用 group_by=category 重查，不要说没有类别分布。",
+                Self::ZhHant => "瀏覽器網站/服務名稱(如 Jira、Confluence、YouTube、郵件)的使用時長按視窗標題查:用 query_stats，設定 title_keyword=服務名 和 metric=duration，不要按程序 apps 查。標題結果為 0 只能說「視窗標題記錄中未找到」，不能斷言未使用，也不能寫與工具結果矛盾的「沒用過但用了 N 分鐘」。詢問期間花在哪些類別或類別時間分布時，用 query_stats 設定 group_by=category 和 metric=duration；「本週」是本週週一至今天。只有總計時用 group_by=category 重查，不要說沒有類別分布。",
+                Self::En => "For a browser website/service name (Jira, Confluence, YouTube, mail, etc.), measure duration from window titles: use query_stats with title_keyword=service name and metric=duration, never process apps. A zero title result means only “not found in the window-title records”; do not claim it was never used or produce a contradiction such as “not used but N minutes”. For time spent by category or category distribution in a period, use query_stats with group_by=category and metric=duration. “This week” means Monday through today. If you got only a total, re-query with group_by=category instead of saying there is no category distribution.",
+                Self::Ja => "ブラウザのウェブサービス/サイト名(Jira、Confluence、YouTube、メールなど)の使用時間はウィンドウタイトルから調べる: query_stats に title_keyword=サービス名 と metric=duration を指定し、プロセス apps は使わない。タイトル結果が 0 件なら「ウィンドウタイトルの記録では見つからなかった」とだけ述べ、未使用と断定せず、「使っていないのに N 分」のような矛盾も作らない。期間のカテゴリ別時間分布やどのカテゴリに時間を使ったかは query_stats に group_by=category と metric=duration を指定する。「今週」は今週の月曜日から今日まで。合計だけ得た場合はカテゴリ分布がないと言わず group_by=category で再検索する。",
+                Self::Pt => "Para nomes de sites/serviços web no navegador (Jira, Confluence, YouTube, e-mail etc.), meça a duração pelos títulos de janela: use query_stats com title_keyword=nome do serviço e metric=duration, nunca o processo apps. Resultado de título zero significa apenas “não encontrado nos registros de títulos de janela”; não diga que nunca foi usado nem crie a contradição “não usou, mas foram N minutos”. Para o tempo por categoria ou a distribuição por categoria em um período, use query_stats com group_by=category e metric=duration. “Esta semana” significa de segunda-feira até hoje. Se recebeu somente um total, consulte novamente com group_by=category em vez de dizer que não há distribuição por categoria.",
+                Self::Es => "Para nombres de sitios/servicios web del navegador (Jira, Confluence, YouTube, correo, etc.), mide la duración por los títulos de ventana: usa query_stats con title_keyword=nombre del servicio y metric=duration, nunca el proceso apps. Un resultado de título igual a cero solo significa «no se encontró en los registros de títulos de ventana»; no digas que nunca se usó ni crees la contradicción «no se usó, pero fueron N minutos». Para el tiempo por categoría o la distribución por categorías en un periodo, usa query_stats con group_by=category y metric=duration. «Esta semana» significa desde el lunes hasta hoy. Si solo recibes un total, vuelve a consultar con group_by=category en vez de decir que no hay distribución por categorías.",
+                Self::Ko => "브라우저 웹서비스/사이트 이름(Jira, Confluence, YouTube, 메일 등)의 사용 시간은 창 제목으로 확인합니다: query_stats에 title_keyword=서비스명과 metric=duration을 지정하고 프로세스 apps를 사용하지 않습니다. 제목 결과가 0이면 ‘창 제목 기록에서 찾지 못했습니다’라고만 제한하며, 사용하지 않았다고 단정하거나 ‘사용하지 않았지만 N분’처럼 결과와 모순되는 문장을 만들지 않습니다. 기간별 카테고리 시간 분포나 어느 카테고리에 시간을 썼는지는 query_stats에 group_by=category와 metric=duration을 지정합니다. ‘이번 주’는 이번 주 월요일부터 오늘까지입니다. 전체 합계만 받으면 카테고리 분포가 없다고 하지 말고 group_by=category로 다시 조회합니다.",
+            }
+            + "\n"
+            + match self {
+                Self::ZhHans => "OCR 覆盖情况只在根据 search_text 结果说明屏幕上没有特定内容时适用;不要用它丢弃 get_timeline/query_stats 的活动或统计结果,也不要以此为由建议开启 OCR。",
+                Self::ZhHant => "OCR 覆蓋情況只在根據 search_text 結果說明螢幕上沒有特定內容時適用;不要用它丟棄 get_timeline/query_stats 的活動或統計結果,也不要以此為由建議開啟 OCR。",
+                Self::En => "OCR coverage applies only when using a search_text result to say that specific content was absent from the screen; do not use it to discard activity or statistics from get_timeline/query_stats, or as a reason to recommend enabling OCR.",
+                Self::Ja => "OCR のカバレッジは、search_text の結果に基づいて画面に特定の内容がなかったと述べる場合にのみ適用する。get_timeline/query_stats の活動・統計結果を捨てたり、OCR の有効化を勧めたりする理由にしてはいけない。",
+                Self::Pt => "A cobertura de OCR só se aplica quando, com base em um resultado de search_text, você disser que um conteúdo específico não apareceu na tela; não descarte resultados de atividade ou estatística de get_timeline/query_stats nem recomende ativar OCR por esse motivo.",
+                Self::Es => "La cobertura de OCR solo se aplica cuando, basándote en un resultado de search_text, digas que un contenido concreto no apareció en pantalla; no descartes los resultados de actividad o estadísticas de get_timeline/query_stats ni recomiendes activar OCR por ese motivo.",
+                Self::Ko => "OCR 커버리지는 search_text 결과를 근거로 화면에 특정 내용이 없었다고 말할 때에만 적용합니다. get_timeline/query_stats의 활동·통계 결과를 OCR 커버리지를 이유로 버리거나, 그 이유로 OCR 활성화를 권하지 않습니다.",
+            }
     }
 
     // ── engine 循环内回填给模型的文案 ─────────────────────
@@ -260,6 +334,7 @@ impl ChatLang {
             Self::Ja => "補足ルール:以下の対話履歴は現在の質問の指示語(「先月は?」など)を理解するためだけのものです。回答は今回ツールが返した結果に基づき、過去の回答の数値や結論を流用しないでください。",
             Self::Pt => "Regra adicional: o histórico de conversa abaixo serve apenas para resolver referências da pergunta atual (ex. \"e no mês passado?\"); baseie a resposta nos resultados de ferramentas desta rodada e não reaproveite números ou conclusões de respostas anteriores.",
             Self::Es => "Regla adicional: el historial de conversación de abajo solo sirve para resolver las referencias de la pregunta actual (p. ej. «¿y el mes pasado?»); basa tu respuesta en los resultados de herramientas obtenidos en esta ronda y no reutilices números ni conclusiones de respuestas anteriores.",
+            Self::Ko => "보충 규칙: 아래 대화 기록은 현재 질문의 지시어(예: \"지난달은?\")를 이해하기 위한 것입니다. 답변은 이번 도구가 반환한 결과를 기반으로 해야 하며, 이전 답변의 숫자나 결론을 그대로 사용하지 마십시오.",
         }
     }
 
@@ -271,6 +346,7 @@ impl ChatLang {
             Self::Ja => "この検索は直前に実行済みで、結果は上記と同じです。パラメータを変えるか、今回すでに返された結果に基づいて回答してください。",
             Self::Pt => "Esta mesma consulta acabou de ser executada; o resultado é o mesmo acima. Mude os parâmetros ou responda com os resultados já obtidos nesta rodada.",
             Self::Es => "Esta misma consulta se acaba de ejecutar; el resultado es el mismo de arriba. Cambia los parámetros o responde con los resultados ya obtenidos en esta ronda.",
+            Self::Ko => "이 조회는 방금 실행되었으며, 결과는 위와 같습니다. 매개변수를 변경하거나, 이번에 이미 반환된 결과를 바탕으로 답변해 주세요.",
         }
     }
 
@@ -282,6 +358,7 @@ impl ChatLang {
             Self::Ja => format!("引数の形式が不正です: {e}"),
             Self::Pt => format!("Argumentos malformados: {e}"),
             Self::Es => format!("Argumentos con formato incorrecto: {e}"),
+            Self::Ko => format!("매개변수 형식 오류: {e}"),
         }
     }
 
@@ -293,6 +370,7 @@ impl ChatLang {
             Self::Ja => format!("引数の検証に失敗しました: {msg}"),
             Self::Pt => format!("Falha na validação dos argumentos: {msg}"),
             Self::Es => format!("Falló la validación de los argumentos: {msg}"),
+            Self::Ko => format!("매개변수 검증 실패: {msg}"),
         }
     }
 
@@ -304,6 +382,7 @@ impl ChatLang {
             Self::Ja => "検索の実行に失敗しました。別の方法を試すか、今回すでに返された結果に基づいて回答してください。",
             Self::Pt => "A consulta falhou. Tente outra abordagem ou responda com os resultados já obtidos nesta rodada.",
             Self::Es => "La consulta no se pudo ejecutar. Prueba otro enfoque o responde con los resultados ya obtenidos en esta ronda.",
+            Self::Ko => "조회 실행에 실패했습니다. 다른 방법을 시도하거나, 이번에 이미 반환된 결과를 바탕으로 답변해 주세요.",
         }
     }
 
@@ -318,6 +397,7 @@ impl ChatLang {
             Self::Ja => "検索ステップを使い切りました。今回ツールが返した結果に基づいて今すぐ回答してください。不足している場合は、何が見つからなかったかを率直に述べてください。",
             Self::Pt => "As etapas de consulta acabaram. Responda agora com os resultados de ferramentas desta rodada; se forem insuficientes, diga claramente o que não foi encontrado.",
             Self::Es => "Se han agotado los pasos de consulta. Responde ahora con los resultados de herramientas de esta ronda; si son insuficientes, di claramente qué no se ha encontrado.",
+            Self::Ko => "조회 단계를 모두 사용했습니다. 이번 도구가 반환한 결과를 바탕으로 즉시 답변해 주세요; 자료가 부족하면 찾지 못했다고 직접 말씀해 주세요.",
         }
     }
 
@@ -331,6 +411,7 @@ impl ChatLang {
             Self::Ja => "今回は検索を完了できませんでした(モデルまたはネットワークの問題です)。おおよその時期(「先週」「7 月 3 日の午後」)やキーワードを添えて、もう一度試してみてください。",
             Self::Pt => "Não foi possível concluir a consulta desta vez (problema de modelo ou rede). Tente perguntar de forma mais específica — por exemplo, com um período aproximado (\"semana passada\", \"3 de julho à tarde\") ou uma palavra-chave.",
             Self::Es => "Esta vez no se ha podido completar la consulta (problema del modelo o de la red). Prueba a preguntar de forma más concreta: por ejemplo, con un periodo aproximado («la semana pasada», «el 3 de julio por la tarde») o una palabra clave.",
+            Self::Ko => "이번에는 조회를 완료하지 못했습니다(모델 또는 네트워크 문제). 더 구체적인 질문으로 다시 시도해 보세요. 예를 들어 대략적인 시간(\"지난주\", \"7월 3일 오후\")이나 키워드를 포함해 보세요.",
         }
     }
 
@@ -342,6 +423,7 @@ impl ChatLang {
             Self::Ja => "モデルは要約を完了できませんでしたが、以下の関連記録が見つかりました。直接ご確認ください。",
             Self::Pt => "O modelo não conseguiu concluir o resumo, mas estes registros relacionados foram encontrados — veja-os diretamente.",
             Self::Es => "El modelo no ha podido terminar el resumen, pero se han encontrado estos registros relacionados: échales un vistazo directamente.",
+            Self::Ko => "모델이 요약을 완료하지 못했지만, 아래와 같은 관련 기록이 발견되었습니다. 직접 확인해 주세요.",
         }
     }
 
@@ -355,6 +437,7 @@ impl ChatLang {
             Self::Ja => "この期間には活動記録がありません。",
             Self::Pt => "Nenhum registro de atividade neste período.",
             Self::Es => "No hay registros de actividad en este periodo.",
+            Self::Ko => "해당 기간에 활동 기록이 없습니다.",
         }
     }
 
@@ -385,6 +468,9 @@ impl ChatLang {
             Self::Es => format!(
                 "{total} registros de actividad en este periodo, que abarcan {first} ~ {last}. A continuación, {shown} entradas muestreadas (hasta {per_hour} por hora, las de mayor duración primero; es una muestra, no la lista completa — basa las conclusiones del periodo en el total y el alcance de esta línea):"
             ),
+            Self::Ko => format!(
+                "해당 기간에 총 {total} 건의 활동 기록이 있으며, {first} ~ {last}에 걸쳐 있습니다. 다음은 시간당 샘플링된 {shown} 건입니다(시간당 최대 {per_hour} 건, 가장 긴 시간순; 이것은 샘플이므로 전체가 아닙니다—기간 전체 결론은 이 줄의 총수와 범위를 기준으로 하세요):"
+            ),
         }
     }
 
@@ -396,6 +482,7 @@ impl ChatLang {
             Self::Ja => format!("この期間の活動記録は計 {total} 件。すべて列挙します:"),
             Self::Pt => format!("{total} registros de atividade neste período, todos listados:"),
             Self::Es => format!("{total} registros de actividad en este periodo, todos listados:"),
+            Self::Ko => format!("해당 기간에 총 {total} 건의 활동 기록이 있으며, 모두 나열합니다:"),
         }
     }
 
@@ -412,6 +499,7 @@ impl ChatLang {
                 Self::Ja => "カバレッジ:この範囲に活動記録はありません。".into(),
                 Self::Pt => "Cobertura: nenhum registro de atividade neste intervalo.".into(),
                 Self::Es => "Cobertura: no hay registros de actividad en este intervalo.".into(),
+                Self::Ko => "커버리지: 해당 범위에 활동 기록이 없습니다.".into(),
             };
         }
         if covered_days == 0 && pending == 0 {
@@ -435,6 +523,9 @@ impl ChatLang {
                 Self::Es => format!(
                     "Cobertura: ninguno de los {activity_days} día(s) activo(s) de este intervalo tiene índice de texto de pantalla (puede que las capturas o el reconocimiento de texto estén desactivados)."
                 ),
+                Self::Ko => format!(
+                    "커버리지: 해당 범위의 활동일 {activity_days}일 중 화면 텍스트 인덱스가 없습니다(스크린샷 또는 화면 텍스트 인식이 비활성화되어 있을 수 있습니다)."
+                ),
             };
         }
         let base = match self {
@@ -456,6 +547,9 @@ impl ChatLang {
             Self::Es => format!(
                 "Cobertura: {covered_days} de {activity_days} día(s) activo(s) de este intervalo tienen índice de texto de pantalla"
             ),
+            Self::Ko => format!(
+                "커버리지: 해당 범위의 활동일 {activity_days}일 중 {covered_days}일에 화면 텍스트 인덱스가 있습니다"
+            ),
         };
         if pending > 0 {
             match self {
@@ -467,10 +561,11 @@ impl ChatLang {
                 Self::Es => {
                     format!("{base}, y quedan {pending} fotograma(s) por reconocer.")
                 }
+                Self::Ko => format!("{base}, 인식 대기 프레임이 {pending}건 있습니다."),
             }
         } else {
             match self {
-                Self::ZhHans | Self::ZhHant | Self::Ja => format!("{base}。"),
+                Self::ZhHans | Self::ZhHant | Self::Ja | Self::Ko => format!("{base}。"),
                 Self::En | Self::Pt | Self::Es => format!("{base}."),
             }
         }
@@ -499,6 +594,9 @@ impl ChatLang {
                 Self::Es => format!(
                     "{total} coincidencia(s) en títulos de ventana; se muestran las {shown} más recientes (una coincidencia de título solo indica que la ventana estaba en uso — sin fragmento de texto de la pantalla):"
                 ),
+                Self::Ko => format!(
+                    "창 제목 매칭 {total}건, 최근 {shown}건 표시(제목 일치는 해당 창을 사용했음을 나타내며, 화면 내 텍스트 조각은 없습니다):"
+                ),
             }
         } else {
             match self {
@@ -520,6 +618,9 @@ impl ChatLang {
                 Self::Es => format!(
                     "{total} coincidencia(s) en títulos de ventana (una coincidencia de título solo indica que la ventana estaba en uso — sin fragmento de texto de la pantalla):"
                 ),
+                Self::Ko => format!(
+                    "창 제목 매칭 {total}건(제목 일치는 해당 창을 사용했음을 나타내며, 화면 내 텍스트 조각은 없습니다):"
+                ),
             }
         }
     }
@@ -532,6 +633,7 @@ impl ChatLang {
             Self::Ja => "ヒットしませんでした。別のキーワード(類義語/英語/より短い語)で再検索してください。",
             Self::Pt => "Nenhum resultado. Tente outras palavras-chave (sinônimos, outro idioma ou termos mais curtos).",
             Self::Es => "Ningún resultado. Prueba con otras palabras clave (sinónimos, otro idioma o términos más cortos).",
+            Self::Ko => "결과가 없습니다. 다른 키워드(동의어, 다른 언어, 또는 더 짧은 단어)로 다시 검색해 보세요.",
         }
     }
 
@@ -556,6 +658,9 @@ impl ChatLang {
                 Self::Es => format!(
                     "{total} resultados en total; se muestran los {shown} más relevantes (acota con un intervalo de fechas para tener más cobertura):"
                 ),
+                Self::Ko => format!(
+                    "총 {total}건의 매칭, 관련도 높은 상위 {shown}건 표시(더 완전한 결과를 원하면 날짜 범위를 좁혀 보세요):"
+                ),
             }
         } else {
             match self {
@@ -565,6 +670,7 @@ impl ChatLang {
                 Self::Ja => format!("計 {total} 件ヒット:"),
                 Self::Pt => format!("{total} resultados:"),
                 Self::Es => format!("{total} resultados:"),
+                Self::Ko => format!("총 {total}건의 매칭:"),
             }
         }
     }
@@ -577,6 +683,7 @@ impl ChatLang {
             Self::Ja => format!("{from} ~ {to} 合計: {dur}"),
             Self::Pt => format!("{from} ~ {to} total: {dur}"),
             Self::Es => format!("{from} ~ {to} total: {dur}"),
+            Self::Ko => format!("{from} ~ {to} 합계: {dur}"),
         }
     }
 
@@ -588,6 +695,7 @@ impl ChatLang {
             Self::Ja => format!("{from} ~ {to} 該当する記録はありません"),
             Self::Pt => format!("{from} ~ {to}: nenhum registro correspondente"),
             Self::Es => format!("{from} ~ {to}: ningún registro coincide"),
+            Self::Ko => format!("{from} ~ {to}에 해당하는 기록이 없습니다"),
         }
     }
 
@@ -608,6 +716,9 @@ impl ChatLang {
                 Self::Es => {
                     format!("{from} ~ {to}: {universe} grupos en total; top {shown} por duración:")
                 }
+                Self::Ko => {
+                    format!("{from} ~ {to} 총 {universe}개 그룹, 시간 순 상위 {shown}개 그룹:")
+                }
             }
         } else {
             match self {
@@ -617,6 +728,7 @@ impl ChatLang {
                 Self::Ja => format!("{from} ~ {to} 合計時間順:"),
                 Self::Pt => format!("{from} ~ {to}, ordenado por duração:"),
                 Self::Es => format!("{from} ~ {to}, ordenado por duración:"),
+                Self::Ko => format!("{from} ~ {to} 시간 순 정렬:"),
             }
         }
     }
@@ -636,6 +748,9 @@ impl ChatLang {
             ),
             Self::Es => format!(
                 "{from} ~ {to}: {n} sesiones de uso (un intervalo ≥{gap} minutos abre una sesión nueva)"
+            ),
+            Self::Ko => format!(
+                "{from} ~ {to} 사용 세션 수: {n}회(간격 ≥{gap}분으로 1회 계산)"
             ),
         }
     }
@@ -704,6 +819,14 @@ impl ChatLang {
                     "{from} ~ {to}: sesiones de uso ({s}un intervalo ≥{gap} minutos abre una sesión nueva):"
                 )
             }
+            Self::Ko => {
+                let s = if scope {
+                    format!("총 {universe}개 그룹, 횟수 순 상위 {shown}개 그룹; ")
+                } else {
+                    String::new()
+                };
+                format!("{from} ~ {to} 사용 세션 수({s}간격 ≥{gap}분으로 1회 계산):")
+            }
         }
     }
 
@@ -731,6 +854,9 @@ impl ChatLang {
             Self::Es => format!(
                 "{from} ~ {to}, desglose diario ({n} día(s) con registros; los días sin registros se omiten{g}):"
             ),
+            Self::Ko => format!(
+                "{from} ~ {to} 일별 통계({n}일 기록 있음; 기록 없는 날은 표시하지 않음{g}):"
+            ),
         }
     }
 
@@ -753,6 +879,7 @@ impl ChatLang {
                 Self::Ja => "。範囲が 60 日を超えたため日別から週別に自動変更",
                 Self::Pt => "; o intervalo excede 60 dias, então o diário mudou automaticamente para semanal",
                 Self::Es => "; el intervalo supera los 60 días, así que el desglose diario pasó automáticamente a semanal",
+                Self::Ko => "; 범위가 60일을 초과하여 일별에서 주별로 자동 변경",
             }
         } else {
             ""
@@ -775,6 +902,9 @@ impl ChatLang {
             ),
             Self::Es => format!(
                 "{from} ~ {to}, desglose semanal ({n} semana(s); cada fila lleva la etiqueta de su lunes{a}{g}):"
+            ),
+            Self::Ko => format!(
+                "{from} ~ {to} 주별 통계({n}주, 각 행은 해당 주의 월요일{a}{g}):"
             ),
         }
     }
@@ -801,6 +931,9 @@ impl ChatLang {
             Self::Es => format!(
                 "{from} ~ {to}, agregado por hora del día (cada hora suma todos los días del intervalo{g}):"
             ),
+            Self::Ko => format!(
+                "{from} ~ {to} 시간대별 집계(범위 내 모든 날의 해당 시간대 합산{g}):"
+            ),
         }
     }
 
@@ -816,6 +949,7 @@ impl ChatLang {
             Self::Ja => format!("。{gap} 分以上の間隔で 1 回と数える"),
             Self::Pt => format!("; intervalo ≥{gap} minutos inicia nova sessão"),
             Self::Es => format!("; un intervalo ≥{gap} minutos abre una sesión nueva"),
+            Self::Ko => format!("; 세션은 간격 ≥{gap}분으로 1회 계산"),
         }
     }
 
@@ -840,6 +974,9 @@ impl ChatLang {
             Self::Es => format!(
                 "{from} ~ {to}: {n} actividades coincidentes; la más antigua empieza a las {first} y la más reciente termina a las {last}"
             ),
+            Self::Ko => format!(
+                "{from} ~ {to} 범위 내 총 {n}건의 매칭 활동: 가장 이른 것은 {first}에 시작, 가장 최근 것은 {last}에 종료"
+            ),
         }
     }
 
@@ -851,6 +988,7 @@ impl ChatLang {
             Self::Ja => format!("{n} 回"),
             Self::Pt => format!("{n} sessões"),
             Self::Es => format!("{n} sesiones"),
+            Self::Ko => format!("{n}회"),
         }
     }
 
@@ -900,6 +1038,13 @@ impl ChatLang {
                     format!("{m} min")
                 }
             }
+            Self::Ko => {
+                if h > 0 {
+                    format!("{h}시간 {m}분")
+                } else {
+                    format!("{m}분")
+                }
+            }
         }
     }
 
@@ -913,6 +1058,7 @@ impl ChatLang {
             Self::Ja => format!("不明なツール {other}。search_text / query_stats / get_timeline のみ使用できます"),
             Self::Pt => format!("Ferramenta desconhecida {other}; apenas search_text / query_stats / get_timeline estão disponíveis"),
             Self::Es => format!("Herramienta desconocida {other}; solo están disponibles search_text / query_stats / get_timeline"),
+            Self::Ko => format!("알 수 없는 도구 {other}; search_text / query_stats / get_timeline만 사용 가능합니다"),
         }
     }
 
@@ -924,6 +1070,7 @@ impl ChatLang {
             Self::Ja => format!("{tool} には date_from と date_to(YYYY-MM-DD)が必要です"),
             Self::Pt => format!("{tool} requer date_from e date_to (YYYY-MM-DD)"),
             Self::Es => format!("{tool} requiere date_from y date_to (YYYY-MM-DD)"),
+            Self::Ko => format!("{tool}에는 date_from과 date_to(YYYY-MM-DD)가 필요합니다"),
         }
     }
 
@@ -935,6 +1082,7 @@ impl ChatLang {
             Self::Ja => format!("{field} は有効な日付ではありません: {val}"),
             Self::Pt => format!("{field} não é uma data válida: {val}"),
             Self::Es => format!("{field} no es una fecha válida: {val}"),
+            Self::Ko => format!("{field}은(는) 유효한 날짜가 아닙니다: {val}"),
         }
     }
 
@@ -946,6 +1094,7 @@ impl ChatLang {
             Self::Ja => "date_from が date_to より後になっています",
             Self::Pt => "date_from é posterior a date_to",
             Self::Es => "date_from es posterior a date_to",
+            Self::Ko => "date_from이 date_to보다 늦습니다",
         }
     }
 
@@ -957,6 +1106,7 @@ impl ChatLang {
             Self::Ja => "期間が 366 日を超えています。範囲を狭めてください",
             Self::Pt => "O intervalo excede 366 dias; reduza-o",
             Self::Es => "El intervalo supera los 366 días; redúcelo",
+            Self::Ko => "시간 범위가 366일을 초과합니다. 범위를 좁혀 주세요",
         }
     }
 
@@ -968,6 +1118,7 @@ impl ChatLang {
             Self::Ja => "date_from が未来の日付です",
             Self::Pt => "date_from está no futuro",
             Self::Es => "date_from está en el futuro",
+            Self::Ko => "date_from이 미래 날짜입니다",
         }
     }
 
@@ -979,6 +1130,7 @@ impl ChatLang {
             Self::Ja => "keywords を空にはできません",
             Self::Pt => "keywords não pode estar vazio",
             Self::Es => "keywords no puede estar vacío",
+            Self::Ko => "keywords는 비어 있을 수 없습니다",
         }
     }
 
@@ -990,6 +1142,7 @@ impl ChatLang {
             Self::Ja => format!("{field} に 64 文字を超える項目があります"),
             Self::Pt => format!("{field} contém um item com mais de 64 caracteres"),
             Self::Es => format!("{field} contiene un elemento de más de 64 caracteres"),
+            Self::Ko => format!("{field}에 64자를 초과하는 항목이 있습니다"),
         }
     }
 
@@ -1001,6 +1154,7 @@ impl ChatLang {
             Self::Ja => "title_keyword が長すぎます(64 文字以内)",
             Self::Pt => "title_keyword é longo demais (máx. 64 caracteres)",
             Self::Es => "title_keyword es demasiado largo (máx. 64 caracteres)",
+            Self::Ko => "title_keyword가 너무 깁니다(최대 64자)",
         }
     }
 
@@ -1012,6 +1166,7 @@ impl ChatLang {
             Self::Ja => "bucket と group_by は併用できません。推移は bucket、ランキングは group_by を使い、どちらか一方を外してください",
             Self::Pt => "bucket e group_by não podem ser combinados: use bucket para tendências, group_by para rankings — remova um deles",
             Self::Es => "bucket y group_by no se pueden combinar: usa bucket para tendencias y group_by para rankings — quita uno de los dos",
+            Self::Ko => "bucket과 group_by는 동시에 사용할 수 없습니다: 추세는 bucket, 순위는 group_by를 사용하세요. 하나를 제거해 주세요",
         }
     }
 
@@ -1049,6 +1204,17 @@ impl ChatLang {
                  4. Si la pregunta ya es autosuficiente, devuélvela sin cambios.\n\
                  Devuelve solo la pregunta final: sin explicaciones, prefijos ni comillas."
             ),
+            Self::Ko => format!(
+                "당신은 질문 재작성기입니다. 대화 기록을 바탕으로, 사용자의 새 질문을 문맥 없이도\
+                 독립적으로 이해할 수 있는 자율 질문으로 재작성합니다.\n규칙:\n\
+                 1. 지시어 해결과 정보 보충만 수행합니다: \"그 앱/이것/이것들\" 등을 대화에서\
+                 해당되는 구체적인 이름으로 바꿉니다; 상대 시간어(어제/지난주)는 그대로 둘 수 있지만,\
+                 연결된 상대 표현(\"그 전 주는?\")은 반드시 계산합니다. 오늘은 {today}입니다.\n\
+                 2. 질문에 답변하지 않습니다. 대화에 없는 정보를 추가하지 않습니다. 의도를 변경하지 않습니다.\n\
+                 3. 새 질문의 원래 언어를 유지합니다.\n\
+                 4. 새 질문이 이미 자율적이면 그대로 출력합니다.\n\
+                 최종 질문만 출력하고, 설명·접두사·인용 부호는 포함하지 않습니다."
+            ),
         }
     }
 
@@ -1061,6 +1227,7 @@ impl ChatLang {
             Self::Ja => "この会話にはやり直せる質問がまだありません。",
             Self::Pt => "Esta conversa ainda não tem uma pergunta para responder novamente.",
             Self::Es => "Esta conversación aún no tiene ninguna pregunta que volver a responder.",
+            Self::Ko => "이 대화에는 다시 답변할 질문이 아직 없습니다.",
         }
     }
 
@@ -1078,6 +1245,7 @@ impl ChatLang {
             Self::Es => {
                 "Esta conversación todavía está respondiendo la pregunta anterior: espera a que termine o pulsa Detener."
             }
+            Self::Ko => "이 대화는 이전 질문에 답변 중입니다. 완료되거나 중지를 누른 후 다시 보내세요.",
         }
     }
 }
@@ -1086,18 +1254,19 @@ impl ChatLang {
 mod tests {
     use super::*;
 
-    /// 六语 × 全部格式化方法的批量烟测:每个变体都产出非空文案,
+    /// 七语 × 全部格式化方法的批量烟测:每个变体都产出非空文案,
     /// 且插值参数(日期/数字/工具名)确实出现在结果里——防"漏改某语言"和
     /// "占位符没插进去"两类低级错误,一次覆盖全部 match 臂。
     #[test]
     fn all_langs_produce_nonempty_interpolated_strings() {
-        const LANGS: [ChatLang; 6] = [
+        const LANGS: [ChatLang; 7] = [
             ChatLang::ZhHans,
             ChatLang::ZhHant,
             ChatLang::En,
             ChatLang::Ja,
             ChatLang::Pt,
             ChatLang::Es,
+            ChatLang::Ko,
         ];
         let today = NaiveDate::from_ymd_opt(2026, 7, 26).unwrap();
         for lang in LANGS {
@@ -1212,6 +1381,7 @@ mod tests {
             ChatLang::Ja,
             ChatLang::Pt,
             ChatLang::Es,
+            ChatLang::Ko,
         ] {
             let p = lang.rewrite_prompt(today);
             assert!(p.contains("2026-07-20"), "{lang:?} 缺 today");
@@ -1228,6 +1398,8 @@ mod tests {
         assert_eq!(ChatLang::from_tag(Some("pt-BR")), ChatLang::Pt);
         assert_eq!(ChatLang::from_tag(Some("es")), ChatLang::Es);
         assert_eq!(ChatLang::from_tag(Some("es-MX")), ChatLang::Es);
+        assert_eq!(ChatLang::from_tag(Some("ko")), ChatLang::Ko);
+        assert_eq!(ChatLang::from_tag(Some("ko-KR")), ChatLang::Ko);
         // 旧前端没传 → 维持历史行为(简中);认不出的 → 英文
         assert_eq!(ChatLang::from_tag(None), ChatLang::ZhHans);
         assert_eq!(ChatLang::from_tag(Some("fr")), ChatLang::En);
@@ -1236,18 +1408,81 @@ mod tests {
     #[test]
     fn system_prompt_language_policy_present() {
         let d = NaiveDate::from_ymd_opt(2026, 7, 8).unwrap();
-        assert!(ChatLang::En.system_prompt(d).contains("reply in English"));
-        assert!(ChatLang::ZhHans.system_prompt(d).contains("简体中文"));
-        assert!(ChatLang::Ja.system_prompt(d).contains("日本語"));
-        assert!(ChatLang::Es.system_prompt(d).contains("en español"));
+        assert!(ChatLang::En.system_prompt(d).contains("interface language"));
+        assert!(ChatLang::ZhHans.system_prompt(d).contains("界面语言"));
+        assert!(ChatLang::ZhHant.system_prompt(d).contains("介面語言"));
+        assert!(ChatLang::Ja
+            .system_prompt(d)
+            .contains("インターフェース言語"));
+        assert!(ChatLang::Pt.system_prompt(d).contains("interface"));
+        assert!(ChatLang::Es.system_prompt(d).contains("interfaz"));
+        assert!(ChatLang::Ko.system_prompt(d).contains("인터페이스 언어"));
+    }
+
+    #[test]
+    fn system_prompts_route_activity_stats_and_ocr_tools() {
+        let d = NaiveDate::from_ymd_opt(2026, 7, 8).unwrap();
+        for lang in [
+            ChatLang::ZhHans,
+            ChatLang::ZhHant,
+            ChatLang::En,
+            ChatLang::Ja,
+            ChatLang::Pt,
+            ChatLang::Es,
+            ChatLang::Ko,
+        ] {
+            let prompt = lang.system_prompt(d);
+            for tool in ["search_text", "query_stats", "get_timeline"] {
+                assert!(prompt.contains(tool), "{lang:?} missing {tool}");
+            }
+        }
+        let ko = ChatLang::Ko.system_prompt(d);
+        assert!(ko.contains("OCR") && ko.contains("search_text"));
+        assert!(ko.contains("get_timeline") && ko.contains("query_stats"));
+        assert!(ko.contains("활동") && ko.contains("통계"));
+        assert!(ko.contains("search_text에 결과가 없을 때만"));
+        assert!(ko.contains("get_timeline/query_stats의 활동·통계 결과"));
+    }
+
+    #[test]
+    fn system_prompts_include_title_and_category_stats_contract() {
+        let d = NaiveDate::from_ymd_opt(2026, 7, 8).unwrap();
+        let langs = [
+            (ChatLang::ZhHans, "周一"),
+            (ChatLang::ZhHant, "週一"),
+            (ChatLang::En, "Monday"),
+            (ChatLang::Ja, "月曜日"),
+            (ChatLang::Pt, "segunda-feira"),
+            (ChatLang::Es, "lunes"),
+            (ChatLang::Ko, "월요일"),
+        ];
+        for (lang, monday) in langs {
+            let prompt = lang.system_prompt(d);
+            for literal in [
+                "title_keyword",
+                "query_stats",
+                "metric",
+                "duration",
+                "group_by",
+                "category",
+            ] {
+                assert!(prompt.contains(literal), "{lang:?} missing {literal}");
+            }
+            assert!(prompt.contains(monday), "{lang:?} missing Monday meaning");
+        }
+
+        let ko = ChatLang::Ko.system_prompt(d);
+        for literal in ["Jira", "Confluence", "창 제목", "group_by=category"] {
+            assert!(ko.contains(literal), "Korean prompt missing {literal}");
+        }
     }
 
     /// 历史使用守则与三条循环回填文案必须限定"本轮"——旧措辞"(以上)已有资料"
     /// 在兜底路径会被读成"包括上轮答案",诱导复述陈旧结论(code review 实锤)。
-    /// 五语言逐一钉死限定词,防止未来措辞回退。
+    /// 七语言逐一钉死限定词,防止未来措辞回退。
     #[test]
     fn engine_feedback_strings_scope_to_this_turn() {
-        let cases: [(ChatLang, &str); 6] = [
+        let cases: [(ChatLang, &str); 7] = [
             (ChatLang::ZhHans, "本轮"),
             (ChatLang::ZhHant, "本輪"),
             (ChatLang::En, "this turn"),
@@ -1256,6 +1491,7 @@ mod tests {
             (ChatLang::Pt, "rodada"),
             // en/de esta ronda 同理
             (ChatLang::Es, "ronda"),
+            (ChatLang::Ko, "이번"),
         ];
         for (lang, marker) in cases {
             assert!(

@@ -214,7 +214,7 @@ impl CaptureService {
         // （只有 tick() 才会 set 它），所以无差别 DELETE 不会冲掉"正在 capture 的当前
         // session" —— 当前还没创建呢。
         if let Err(e) = activities::purge_orphan_sessions(&self.inner.pool).await {
-            log::warn!("启动期孤儿 session 清理失败: {e}");
+            log::warn!("startup orphan session cleanup failed: {e}");
         }
 
         let inner = Arc::clone(&self.inner);
@@ -222,7 +222,7 @@ impl CaptureService {
             loop {
                 tokio::time::sleep(std::time::Duration::from_secs(POLL_INTERVAL_SECS)).await;
                 if let Err(e) = tick(&inner).await {
-                    log::warn!("采集 tick 失败: {e}");
+                    log::warn!("capture tick failed: {e}");
                     let mut le = inner.last_error.lock().await;
                     *le = Some(e.to_string());
                 }
@@ -230,13 +230,13 @@ impl CaptureService {
         }));
     }
 
-    /// 停止后台采集 task。同时 seal 当前会话写入 outbox，避免数据丢失。
+    /// 停止后台采集 task。同时 seal 当前会话，避免数据丢失。
     pub async fn stop(&self) {
         let mut h = self.inner.handle.lock().await;
         if let Some(handle) = h.take() {
             handle.abort();
         }
-        // seal 当前会话（如果有），让它进入 outbox 在下次同步推送。
+        // seal 当前会话（如果有）。
         // 结束时刻做 gap 钳制：机器刚从睡眠醒来、还没跑过一次 tick 用户就退出的话，
         // 按"上次 tick"封口而不是 now——不把整段睡眠算进最后那个 app。
         let end = {
@@ -250,7 +250,7 @@ impl CaptureService {
         if let Some(prev) = cur_lock.take() {
             drop(cur_lock);
             if let Err(e) = activities::seal_session(&self.inner.pool, prev.id, end).await {
-                log::warn!("stop: seal_session 失败 (id={}): {e}", prev.id);
+                log::warn!("stop: seal_session failed (id={}): {e}", prev.id);
             }
         }
     }
@@ -318,7 +318,7 @@ impl CaptureService {
         let today_count = activities::today_count(&self.inner.pool)
             .await
             .unwrap_or_else(|e| {
-                log::warn!("today_count 查询失败: {e}");
+                log::warn!("today_count query failed: {e}");
                 0
             });
         CaptureStatus {
@@ -347,12 +347,12 @@ async fn tick(inner: &Inner) -> Result<()> {
             if let Some(prev_sess) = cur_lock.take() {
                 drop(cur_lock);
                 log::info!(
-                    "tick gap {}s（睡眠/暂停），会话 {} 按上次 tick 时刻封口",
+                    "tick gap {}s (sleep/paused), session {} sealed at last tick time",
                     (now_tick - prev).num_seconds(),
                     prev_sess.id
                 );
                 if let Err(e) = activities::seal_session(&inner.pool, prev_sess.id, prev).await {
-                    log::warn!("seal_session 失败 (睡眠 gap, id={}): {e}", prev_sess.id);
+                    log::warn!("seal_session failed (sleep gap, id={}): {e}", prev_sess.id);
                 }
             }
         }
@@ -364,7 +364,7 @@ async fn tick(inner: &Inner) -> Result<()> {
             let now = Local::now();
             let now_minutes = now.hour() as i32 * 60 + now.minute() as i32;
             if !in_work_hours(now_minutes, &wh.ranges) {
-                log::debug!("跳过本次采集：当前不在工作时段");
+                log::debug!("skipping capture: not within work hours");
                 // 离开工作时段：seal 当前会话（推到云端） + 清空 current
                 let mut cur_lock = inner.current.lock().await;
                 if let Some(prev) = cur_lock.take() {
@@ -372,7 +372,7 @@ async fn tick(inner: &Inner) -> Result<()> {
                     if let Err(e) =
                         activities::seal_session(&inner.pool, prev.id, Local::now()).await
                     {
-                        log::warn!("seal_session 失败 (离开工作时段, id={}): {e}", prev.id);
+                        log::warn!("seal_session failed (left work hours, id={}): {e}", prev.id);
                     }
                 }
                 return Ok(());
@@ -392,11 +392,14 @@ async fn tick(inner: &Inner) -> Result<()> {
             drop(cur_lock);
             let end = Local::now() - Duration::seconds(crate::platform::idle_secs() as i64);
             log::info!(
-                "屏幕不可看（息屏/锁屏/屏保），会话 {} 按最后输入时刻封口",
+                "screen unavailable (off/locked/screensaver), session {} sealed at last input time",
                 prev.id
             );
             if let Err(e) = activities::seal_session(&inner.pool, prev.id, end).await {
-                log::warn!("seal_session 失败 (息屏/锁屏, id={}): {e}", prev.id);
+                log::warn!(
+                    "seal_session failed (screen off/locked, id={}): {e}",
+                    prev.id
+                );
             }
         }
         return Ok(());
@@ -418,7 +421,7 @@ async fn tick(inner: &Inner) -> Result<()> {
             return Ok(());
         }
         if !crate::platform::is_desktop_foreground() && keepawake_active(inner).await {
-            log::debug!("键鼠空闲 {idle_now}s 但有显示防睡断言（媒体播放中），会话延续");
+            log::debug!("keyboard/mouse idle {idle_now}s but display keepawake active (media playing), session continuing");
         } else {
             let mut cur_lock = inner.current.lock().await;
             if let Some(prev) = cur_lock.take() {
@@ -431,7 +434,7 @@ async fn tick(inner: &Inner) -> Result<()> {
                 let real_end = idle_seal_end(input_end, media_end);
                 if let Err(e) = activities::seal_session(&inner.pool, prev.id, real_end).await {
                     log::warn!(
-                        "seal_session 失败 (用户挂机 {idle_now}s, id={}): {e}",
+                        "seal_session failed (user idle {idle_now}s, id={}): {e}",
                         prev.id
                     );
                 }
@@ -443,7 +446,7 @@ async fn tick(inner: &Inner) -> Result<()> {
     let info = match window::current_window() {
         Ok(i) => i,
         Err(e) => {
-            log::debug!("跳过本次采集：{e}");
+            log::debug!("skipping capture: {e}");
             return Ok(());
         }
     };
@@ -468,7 +471,7 @@ async fn tick(inner: &Inner) -> Result<()> {
             if let Ok(Some(title)) =
                 tokio::task::spawn_blocking(move || window::macos_recover_title(pid)).await
             {
-                log::debug!("SCK 补取到标题：{} -> {title}", info.app_name);
+                log::debug!("SCK recovered title: {} -> {title}", info.app_name);
                 info.title = title;
             }
         }
@@ -478,7 +481,10 @@ async fn tick(inner: &Inner) -> Result<()> {
     // 调试字符串残片（如 "8607797 pid=58750 ]"）：进程启动/退出瞬间 AppKit/xcap
     // 偶尔给出的垃圾名。写进 activities 会在前端出现无图标的幽灵应用行，跳过本 tick。
     if window::is_garbage_window_name(&info.app_name) {
-        log::debug!("跳过本次采集：app 名疑似调试残片 ({})", info.app_name);
+        log::debug!(
+            "skipping capture: app name looks like debug fragment ({})",
+            info.app_name
+        );
         return Ok(());
     }
 
@@ -492,7 +498,7 @@ async fn tick(inner: &Inner) -> Result<()> {
             drop(cur_lock);
             if let Err(e) = activities::seal_session(&inner.pool, prev.id, Local::now()).await {
                 log::warn!(
-                    "seal_session 失败 (系统占位进程 {}, id={}): {e}",
+                    "seal_session failed (system placeholder process {}, id={}): {e}",
                     info.app_name,
                     prev.id
                 );
@@ -566,10 +572,10 @@ async fn tick(inner: &Inner) -> Result<()> {
     };
 
     if need_new {
-        // 焦点切换 / 间隔到点：先把旧会话钉死（推 outbox），再开新会话
+        // 焦点切换 / 间隔到点：先把旧会话钉死，再开新会话
         if let Some(prev) = current_lock.take() {
             if let Err(e) = activities::seal_session(&inner.pool, prev.id, now).await {
-                log::warn!("seal_session 失败 (开新会话, id={}): {e}", prev.id);
+                log::warn!("seal_session failed (new session, id={}): {e}", prev.id);
             }
         }
         // 隐私过滤：标题或 URL（如果有）命中关键词 → 不截图，但活动行照常落库。
@@ -579,7 +585,7 @@ async fn tick(inner: &Inner) -> Result<()> {
         let skip = should_skip_for_privacy(inner, &info, privacy_url, is_browser).await;
         if skip {
             log::info!(
-                "隐私过滤命中，跳过截图 app={} title={:?} url={:?} (inherited={url_inherited})",
+                "privacy filter hit, skipping screenshot app={} title={:?} url={:?} (inherited={url_inherited})",
                 info.app_name,
                 info.title,
                 url
@@ -594,7 +600,10 @@ async fn tick(inner: &Inner) -> Result<()> {
                     // 后才拍；同一浏览器进程内切 tab 不换 PID，pre-capture 的 PID 校验
                     // 挡不住。拍完按"现在"的焦点再判一次，命中就丢图（活动行照常落库）。
                     if recheck_privacy_after_shot(inner, &info, is_browser).await {
-                        log::info!("隐私复核命中，丢弃截图 app={}", info.app_name);
+                        log::info!(
+                            "privacy recheck hit, discarding screenshot app={}",
+                            info.app_name
+                        );
                         let _ = tokio::fs::remove_file(&path).await;
                         None
                     } else {
@@ -617,7 +626,7 @@ async fn tick(inner: &Inner) -> Result<()> {
             )
             .await
             {
-                log::warn!("帧登记失败 ({path}): {e}");
+                log::warn!("frame registration failed ({path}): {e}");
             }
         }
         // 忽略规则：命中的行照常入库（截图/OCR 不受影响），仅打 excluded 标记，
@@ -640,7 +649,7 @@ async fn tick(inner: &Inner) -> Result<()> {
         let id = activities::insert_new(&inner.pool, &info, now, shot, excluded, url_host).await?;
         // 保证这个 process_name 有对应的 app_group / member（首次见到的应用建单成员组）
         if let Err(e) = app_groups::ensure_group(&inner.pool, &info.app_name).await {
-            log::warn!("ensure_group 失败 ({}): {e}", info.app_name);
+            log::warn!("ensure_group failed ({}): {e}", info.app_name);
         }
         *current_lock = Some(CurrentSession {
             id,
@@ -848,7 +857,7 @@ async fn take_screenshot(inner: &Inner, expected_pid: u32) -> Option<String> {
     {
         Ok(p) => p,
         Err(e) => {
-            log::warn!("截图失败: {e}");
+            log::warn!("screenshot failed: {e}");
             None
         }
     }

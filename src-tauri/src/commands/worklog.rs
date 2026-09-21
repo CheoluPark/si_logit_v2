@@ -1,10 +1,13 @@
+use std::path::PathBuf;
 use std::sync::Arc;
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use tauri::State;
 
-use crate::ai::server::EngineSupervisor;
+use crate::ai::config::AiConfig;
+use crate::ai::models;
+use crate::ai::server::{EngineStartOverrides, EngineState, EngineSupervisor, DEFAULT_CTX_SIZE};
 use crate::commands::screen_memory::MemoryState;
 use crate::memory::MemoryDb;
 use crate::repo::settings;
@@ -42,20 +45,6 @@ pub struct WorkItem {
     /// 산출물 (customfield_13551)
     #[serde(default)]
     pub output: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct WorkLogDraft {
-    pub work_item_key: String,
-    pub summary: String,
-    pub started_at: String,
-    pub ended_at: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct WorkLogResult {
-    pub success: bool,
-    pub message: String,
 }
 
 /// MCP streamable HTTP 클라이언트: initialize → tools/call → 파싱
@@ -107,10 +96,7 @@ pub async fn fetch_work_items(pool: State<'_, DbPool>) -> Result<Vec<WorkItem>, 
         .map(|s| s.to_string());
 
     // initialize 응답 본문 파싱 (에러 무시 — 서버가 세션 ID 없이 응답할 수 있음)
-    let _init_json: serde_json::Value = init_resp
-        .json()
-        .await
-        .unwrap_or(serde_json::Value::Null);
+    let _init_json: serde_json::Value = init_resp.json().await.unwrap_or(serde_json::Value::Null);
 
     // ── Step 2: notifications/initialized ───────────────────────────
     let notif_body = serde_json::json!({
@@ -282,61 +268,13 @@ fn parse_sse_response(body: &str, request_id: u64) -> Result<serde_json::Value, 
         .ok_or_else(|| "SSE 스트림에서 유효한 JSON-RPC 메시지를 찾을 수 없습니다.".to_string())
 }
 
-// =========================================================================
-// PLACEHOLDER: Replace this function body with actual MCP call
-//
-// This function should call your company's MCP server to register
-// a work log entry via Jira for the given work item.
-//
-// The MCP server URL and PAT (Personal Access Token) should be stored
-// in the app's settings and read from there.
-//
-// Example MCP call (replace with your actual implementation):
-//   let client = reqwest::Client::new();
-//   let resp = client
-//       .post(&format!("{mcp_server_url}/tools/call"))
-//       .header("Authorization", format!("Bearer {pat}"))
-//       .json(&serde_json::json!({
-//           "tool": "jira_add_worklog",
-//           "arguments": {
-//               "issue_key": draft.work_item_key,
-//               "time_spent": compute_duration(&draft),
-//               "comment": draft.summary,
-//               "started": draft.started_at,
-//           }
-//       }))
-//       .send()
-//       .await
-//       .map_err(|e| format!("MCP request failed: {e}"))?;
-//
-//   let body: serde_json::Value = resp.json().await
-//       .map_err(|e| format!("MCP response parse failed: {e}"))?;
-//   // ... check body for success
-// =========================================================================
-#[tauri::command]
-pub async fn register_work_log(draft: WorkLogDraft) -> Result<WorkLogResult, String> {
-    log::info!(
-        "register_work_log: key={}, summary={}, started={}, ended={}",
-        draft.work_item_key,
-        draft.summary,
-        draft.started_at,
-        draft.ended_at
-    );
-
-    Ok(WorkLogResult {
-        success: true,
-        message: format!("Work log registered for {} (placeholder)", draft.work_item_key),
-    })
-}
-
 // ────────────────── generate_work_description ──────────────────
 
 /// epoch ms → "HH:MM" 로컬 시각 문자열 (프롬프트 표시용).
 fn epoch_ms_to_hm(ms: i64) -> String {
     let secs = ms / 1000;
     let nsecs = ((ms % 1000) * 1_000_000) as u32;
-    let dt: DateTime<Utc> = DateTime::from_timestamp(secs, nsecs)
-        .unwrap_or_default();
+    let dt: DateTime<Utc> = DateTime::from_timestamp(secs, nsecs).unwrap_or_default();
     dt.format("%H:%M").to_string()
 }
 
@@ -344,46 +282,73 @@ fn epoch_ms_to_hm(ms: i64) -> String {
 fn epoch_ms_to_rfc3339(ms: i64) -> String {
     let secs = ms / 1000;
     let nsecs = ((ms % 1000) * 1_000_000) as u32;
-    let dt: DateTime<Utc> = DateTime::from_timestamp(secs, nsecs)
-        .unwrap_or_default();
+    let dt: DateTime<Utc> = DateTime::from_timestamp(secs, nsecs).unwrap_or_default();
     dt.to_rfc3339()
 }
 
-/// MemoryDb의 text_sessions에서 해당 시간 범위에 겹치는 OCR 텍스트를 조회.
-async fn query_ocr_text(
-    mem: &MemoryDb,
-    date: &str,
-    start_ms: i64,
-    end_ms: i64,
-) -> Result<String, String> {
+/// Compacted summaries are preferred; raw local sessions remain the transitional
+/// fallback until they have a successful non-empty summary.
+async fn query_ocr_evidence(mem: &MemoryDb, start_ms: i64, end_ms: i64) -> Result<String, String> {
     let start_rfc = epoch_ms_to_rfc3339(start_ms);
     let end_rfc = epoch_ms_to_rfc3339(end_ms);
-    let date = date.to_string();
     mem.0
         .call(move |conn| {
             let mut stmt = conn
                 .prepare(
-                    "SELECT text FROM text_sessions
-                     WHERE local_date = ?1
-                       AND started_ts < ?3
-                       AND ended_ts > ?2
+                    "SELECT started_ts, ended_ts, app_id, title, summary, 1
+                       FROM ocr_task_summaries
+                      WHERE julianday(started_ts) < julianday(?2)
+                        AND julianday(ended_ts) > julianday(?1)
+                        AND status = 'success'
+                        AND trim(summary) != ''
+                     UNION ALL
+                     SELECT s.started_ts, s.ended_ts, s.app_id, s.title, s.text, 0
+                       FROM text_sessions s
+                      WHERE julianday(s.started_ts) < julianday(?2)
+                        AND julianday(s.ended_ts) > julianday(?1)
+                        AND s.origin_device IS NULL
+                        AND trim(s.text) != ''
+                        AND NOT EXISTS (
+                            SELECT 1
+                              FROM ocr_task_summaries c
+                             WHERE c.source_session_guid = s.guid
+                               AND c.status = 'success'
+                               AND trim(c.summary) != ''
+                        )
                      ORDER BY started_ts ASC",
                 )
                 .db()?;
-            let texts: Vec<String> = stmt
-                .query_map(rusqlite::params![date, start_rfc, end_rfc], |r| r.get(0))
+            let evidence: Vec<String> = stmt
+                .query_map(rusqlite::params![start_rfc, end_rfc], |r| {
+                    let started: String = r.get(0)?;
+                    let ended: String = r.get(1)?;
+                    let app_id: Option<String> = r.get(2)?;
+                    let title: Option<String> = r.get(3)?;
+                    let text: String = r.get(4)?;
+                    let compacted: i64 = r.get(5)?;
+                    let label = if compacted == 1 {
+                        "[COMPACTED OCR SUMMARY]"
+                    } else {
+                        "[RAW OCR]"
+                    };
+                    Ok(format!(
+                        "{label}\n시간: {started} ~ {ended}\n앱: {}\n창 제목: {}\n근거:\n{}",
+                        app_id.as_deref().unwrap_or(""),
+                        title.as_deref().unwrap_or(""),
+                        text.trim()
+                    ))
+                })
                 .db()?
                 .filter_map(|r| r.ok())
-                .filter(|t: &String| !t.trim().is_empty())
                 .collect();
-            Ok(texts.join("\n---\n"))
+            Ok(evidence.join("\n---\n"))
         })
         .await
         .map_err(|e| e.to_string())
 }
 
-/// activities 테이블에서 해당 시간 범위의 process_name + window_title을 조회 (fallback).
-async fn query_activities_fallback(
+/// activities 테이블에서 해당 시간 범위의 process_name + window_title을 조회.
+async fn query_activities(
     pool: &DbPool,
     date: &str,
     start_ms: i64,
@@ -405,7 +370,10 @@ async fn query_activities_fallback(
                 .db()?;
             let rows: Vec<(String, String)> = stmt
                 .query_map(rusqlite::params![date, start_rfc, end_rfc], |r| {
-                    Ok((r.get::<_, String>(0)?, r.get::<_, String>(1).unwrap_or_default()))
+                    Ok((
+                        r.get::<_, String>(0)?,
+                        r.get::<_, String>(1).unwrap_or_default(),
+                    ))
                 })
                 .db()?
                 .filter_map(|r| r.ok())
@@ -415,12 +383,20 @@ async fn query_activities_fallback(
             let unique: Vec<String> = rows
                 .into_iter()
                 .filter_map(|(proc, title)| {
+                    let proc = proc.trim();
+                    let title = title.trim();
+                    if proc.is_empty() && title.is_empty() {
+                        return None;
+                    }
+
                     let key = format!("{proc}|{title}");
                     if seen.insert(key) {
-                        let mut s = proc;
-                        if !title.is_empty() {
+                        let mut s = proc.to_string();
+                        if !title.is_empty() && !proc.is_empty() {
                             s.push_str(" — ");
                             s.push_str(&title);
+                        } else if !title.is_empty() {
+                            s = title.to_string();
                         }
                         Some(s)
                     } else {
@@ -434,7 +410,271 @@ async fn query_activities_fallback(
         .map_err(|e| e.to_string())
 }
 
+fn description_system_prompt() -> &'static str {
+    "당신은 Work Log 설명을 작성하는 도우미다. 입력의 Work Item 컨텍스트, OCR 텍스트, 활동 기록(process_name + window_title)을 모두 근거로 삼아 서로 보완되는 내용을 최대한 종합하라. 다음 규칙을 지켜라:\n\
+        - 구체적인 한국어 작업 문장을 1~3개만 작성한다.\n\
+        - 실제 파일명, 설계·구현·검증 대상, 이슈 키·프로젝트명은 입력에 있는 그대로 사용한다.\n\
+        - OCR이나 창 제목에 근거가 없으면 '수정했다', '설계했다', '완료했다'처럼 단정하지 말고 관련 작업 또는 검토로 제한한다.\n\
+        - 앱별 시간 나열, 총 시간 언급, 입력 데이터 원문 복사는 금지한다. Markdown 없이 평문만 출력한다."
+}
+
+fn description_system_prompt_with_template(template: &str) -> String {
+    let template = template.trim();
+    if template.is_empty() {
+        return description_system_prompt().to_string();
+    }
+    format!(
+        "{}\n\n[사용자 지정 Work Log 지침]\n{}\n[사용자 지정 Work Log 지침 끝]\n\n[고정 최종 규칙]\n사용자 지정 지침은 출력 형식만 정할 수 있다. 사실성·근거·증거 보존 규칙과 충돌하면 이 고정 규칙이 우선한다.",
+        description_system_prompt(),
+        template
+    )
+}
+
+fn take_chars(text: &str, max_chars: usize) -> String {
+    text.chars().take(max_chars).collect()
+}
+
+fn truncate_with_marker(text: &str, max_chars: usize) -> String {
+    let text = text.trim();
+    if text.chars().count() <= max_chars {
+        return text.to_string();
+    }
+    let marker = "\n[… 입력 일부 생략 …]\n";
+    if max_chars <= marker.chars().count() {
+        return take_chars(marker, max_chars);
+    }
+    let side = (max_chars - marker.chars().count()) / 2;
+    let head: String = text.chars().take(side).collect();
+    let tail: String = text
+        .chars()
+        .rev()
+        .take(max_chars - marker.chars().count() - side)
+        .collect::<String>()
+        .chars()
+        .rev()
+        .collect();
+    format!("{head}{marker}{tail}")
+}
+
+fn context_tokens(text: &str) -> Vec<String> {
+    let mut tokens = Vec::new();
+    let mut current = String::new();
+    let flush = |current: &mut String, tokens: &mut Vec<String>| {
+        if current.chars().count() >= 3 && !tokens.iter().any(|t| t == current) {
+            tokens.push(std::mem::take(current));
+        } else {
+            current.clear();
+        }
+    };
+
+    for ch in text.chars() {
+        if ch.is_alphanumeric() || matches!(ch, '_' | '-' | '.' | '/') {
+            current.push(ch);
+        } else {
+            flush(&mut current, &mut tokens);
+        }
+    }
+    flush(&mut current, &mut tokens);
+    tokens
+}
+
+fn ocr_chunks(ocr_text: &str) -> Vec<&str> {
+    ocr_text
+        .split("\n---\n")
+        .map(str::trim)
+        .filter(|chunk| !chunk.is_empty())
+        .collect()
+}
+
+fn evenly_spaced_indices(len: usize, max_count: usize) -> Vec<usize> {
+    if len == 0 || max_count == 0 {
+        return Vec::new();
+    }
+    if len <= max_count {
+        return (0..len).collect();
+    }
+    (0..max_count)
+        .map(|n| n * (len - 1) / (max_count - 1).max(1))
+        .fold(Vec::new(), |mut indices, index| {
+            if !indices.contains(&index) {
+                indices.push(index);
+            }
+            indices
+        })
+}
+
+/// OCR 조각을 관련도 우선으로 고르되, 시간대 앞·중간·끝도 남긴다.
+fn build_budgeted_ocr_section(ocr_text: &str, budget: usize, relevance_source: &str) -> String {
+    let chunks = ocr_chunks(ocr_text);
+    if chunks.is_empty() || budget == 0 {
+        return String::new();
+    }
+
+    let header = "[OCR 텍스트 시작]\n";
+    let footer = "\n[OCR 텍스트 끝]";
+    let full = chunks.join("\n---\n");
+    if header.chars().count() + full.chars().count() + footer.chars().count() <= budget {
+        return format!("{header}{full}{footer}");
+    }
+
+    let tokens = context_tokens(relevance_source);
+    let mut relevance: Vec<(usize, usize)> = chunks
+        .iter()
+        .enumerate()
+        .map(|(index, chunk)| {
+            (
+                index,
+                tokens
+                    .iter()
+                    .filter(|token| chunk.contains(token.as_str()))
+                    .count(),
+            )
+        })
+        .filter(|(_, score)| *score > 0)
+        .collect();
+    relevance.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
+
+    let omitted_marker = format!(
+        "[OCR 일부만 포함: 전체 {}개 조각 중 대표 조각 선택]\n",
+        chunks.len()
+    );
+    let content_budget = budget.saturating_sub(
+        header.chars().count() + omitted_marker.chars().count() + footer.chars().count(),
+    );
+    if content_budget == 0 {
+        return truncate_with_marker(&format!("{header}{omitted_marker}{footer}"), budget);
+    }
+
+    let mut order = Vec::new();
+    let relevance_budget = content_budget * 2 / 3;
+    let mut relevance_used = 0;
+    for (index, _) in relevance {
+        if relevance_used >= relevance_budget {
+            break;
+        }
+        order.push(index);
+        relevance_used += chunks[index].chars().count().min(content_budget / 8).max(1);
+    }
+    for index in evenly_spaced_indices(chunks.len(), 8) {
+        if !order.contains(&index) {
+            order.push(index);
+        }
+    }
+
+    let per_chunk = (content_budget / 8).max(1);
+    let mut selected = Vec::new();
+    let mut used = 0;
+    for index in order {
+        let separator = if selected.is_empty() {
+            0
+        } else {
+            "\n---\n".chars().count()
+        };
+        let remaining = content_budget.saturating_sub(used + separator);
+        if remaining == 0 {
+            break;
+        }
+        let chunk = take_chars(chunks[index], per_chunk.min(remaining));
+        if chunk.is_empty() {
+            continue;
+        }
+        used += separator + chunk.chars().count();
+        selected.push((index, chunk));
+    }
+    selected.sort_by_key(|(index, _)| *index);
+    let body = selected
+        .into_iter()
+        .map(|(_, chunk)| chunk)
+        .collect::<Vec<_>>()
+        .join("\n---\n");
+    format!("{header}{omitted_marker}{body}{footer}")
+}
+
+#[cfg(test)]
+fn worklog_content_budget(ctx_size: u32, max_tokens: u32) -> usize {
+    worklog_content_budget_with_template(ctx_size, max_tokens, "")
+}
+
+fn worklog_content_budget_with_template(ctx_size: u32, max_tokens: u32, template: &str) -> usize {
+    let input_budget = (ctx_size as usize).saturating_sub(max_tokens as usize);
+    input_budget
+        .saturating_sub(
+            description_system_prompt_with_template(template)
+                .chars()
+                .count(),
+        )
+        .saturating_sub(768)
+        * 3
+        / 4
+}
+
+/// Work Item/activity를 먼저 보존하고, 남은 예산으로 OCR을 대표 샘플링한다.
+#[cfg(test)]
+fn build_budgeted_inputs(
+    ctx_size: u32,
+    max_tokens: u32,
+    summary: &str,
+    activity_text: &str,
+    ocr_text: &str,
+) -> (String, String) {
+    build_budgeted_inputs_with_template(ctx_size, max_tokens, summary, activity_text, ocr_text, "")
+}
+
+fn build_budgeted_inputs_with_template(
+    ctx_size: u32,
+    max_tokens: u32,
+    summary: &str,
+    activity_text: &str,
+    ocr_text: &str,
+    template: &str,
+) -> (String, String) {
+    let budget = worklog_content_budget_with_template(ctx_size, max_tokens, template);
+    let priority_budget = budget * 3 / 4;
+    let activity_overhead = "[활동 기록(process_name + window_title) 시작]\n"
+        .chars()
+        .count()
+        + "\n[활동 기록 끝]".chars().count();
+    let summary_len = summary.trim().chars().count();
+    let activity_len = activity_text.trim().chars().count();
+    let (summary_budget, activity_payload_budget) =
+        if summary_len + activity_len + activity_overhead <= priority_budget {
+            (summary_len, activity_len)
+        } else {
+            let summary_budget = summary_len.min(priority_budget / 2);
+            (
+                summary_budget,
+                priority_budget.saturating_sub(summary_budget + activity_overhead),
+            )
+        };
+    let budgeted_summary = truncate_with_marker(summary, summary_budget);
+    let remaining = budget.saturating_sub(budgeted_summary.chars().count());
+
+    let activity_label = "[활동 기록(process_name + window_title) 시작]\n";
+    let activity_footer = "\n[활동 기록 끝]";
+    let activity_payload = truncate_with_marker(activity_text, activity_payload_budget);
+    let activity_section = if activity_payload.is_empty() {
+        String::new()
+    } else {
+        format!("{activity_label}{activity_payload}{activity_footer}")
+    };
+    let separator_budget = if activity_section.is_empty() { 0 } else { 2 };
+    let ocr_budget = remaining
+        .saturating_sub(activity_section.chars().count())
+        .saturating_sub(separator_budget);
+    let relevance_source = format!("{summary}\n{activity_text}");
+    let ocr_section = build_budgeted_ocr_section(ocr_text, ocr_budget, &relevance_source);
+
+    let context = match (activity_section.is_empty(), ocr_section.is_empty()) {
+        (true, true) => String::new(),
+        (false, true) => activity_section,
+        (true, false) => ocr_section,
+        (false, false) => format!("{activity_section}\n\n{ocr_section}"),
+    };
+    (budgeted_summary, context)
+}
+
 /// LLM 프롬프트를 빌드한다 (단위 테스트 가능).
+#[cfg(test)]
 fn build_description_prompt(
     date: &str,
     start_ms: i64,
@@ -442,23 +682,106 @@ fn build_description_prompt(
     summary: &str,
     context_text: &str,
 ) -> (String, String) {
-    let system = "다음은 스크린샷 OCR 텍스트와 창 제목이다. \
-        사용자가 수행한 작업을 구체적인 문장으로 1~3개 요약하라. \
-        예: 'ACU 기능 시험 보고서 작성'. \
-        활동 나열 금지, 총 수행시간 언급 금지, 마크다운 금지, 평문만.".to_string();
+    build_description_prompt_with_template(date, start_ms, end_ms, summary, context_text, "")
+}
+
+fn build_description_prompt_with_template(
+    date: &str,
+    start_ms: i64,
+    end_ms: i64,
+    summary: &str,
+    context_text: &str,
+    template: &str,
+) -> (String, String) {
+    let system = description_system_prompt_with_template(template);
 
     let time_range = format!("{} ~ {}", epoch_ms_to_hm(start_ms), epoch_ms_to_hm(end_ms));
     let user_text = format!(
-        "날짜: {date}\n시간범위: {time_range}\n작업 요약: {summary}\n\n\
-         스크린샷 OCR 텍스트 및 창 제목:\n{context_text}"
+        "날짜: {date}\n시간범위: {time_range}\n\
+         Work Item 컨텍스트 (프론트엔드에서 summary/background/info/objective/output을 합친 값):\n{summary}\n\n\
+         아래 근거를 종합해 설명을 작성하라.\n{context_text}"
     );
     (system, user_text)
 }
 
+fn summary_engine_overrides(ai: &AiConfig) -> EngineStartOverrides {
+    EngineStartOverrides {
+        batch_size: ai.summary_batch_size_effective(),
+        parallel_slots: ai.summary_parallel_slots_effective(),
+        ctx_size: ai.summary_ctx_size_effective(),
+    }
+}
+
+fn resolve_summary_model_paths(ai: &AiConfig) -> Result<(PathBuf, Option<PathBuf>), String> {
+    let main_name = ai.effective_summary_main();
+    let mmproj_name = ai.effective_summary_mmproj();
+    let models_dir = models::root_dir(ai);
+    let main_path = models_dir.join(main_name);
+    if !main_path.exists() {
+        return Err(format!(
+            "Summary 모델 파일을 찾을 수 없습니다: {}（가능한 경로: {}）",
+            main_name,
+            main_path.display()
+        ));
+    }
+
+    let mmproj_path = if mmproj_name.trim().is_empty() {
+        None
+    } else {
+        let path = models_dir.join(mmproj_name);
+        if !path.exists() {
+            return Err(format!(
+                "Summary vision projection 파일을 찾을 수 없습니다: {}（가능한 경로: {}）",
+                mmproj_name,
+                path.display()
+            ));
+        }
+        Some(path)
+    };
+
+    Ok((main_path, mmproj_path))
+}
+
+/// 로컬 summary 모델과 시작 옵션이 일치할 때만 엔진을 재사용한다.
+/// 클라우드 summary는 로컬 엔진을 시작하지 않고 `None`을 반환한다.
+async fn ensure_summary_engine(
+    supervisor: &Arc<EngineSupervisor>,
+    ai: &AiConfig,
+) -> Result<Option<u16>, String> {
+    if ai.summary_use_cloud() {
+        return Ok(None);
+    }
+
+    let (main_path, mmproj_path) = resolve_summary_model_paths(ai)?;
+    let overrides = summary_engine_overrides(ai);
+    let status = supervisor.status().await;
+    if status.state == EngineState::Running {
+        if let Some(port) = status.port {
+            if supervisor.loaded_main().as_deref() == Some(main_path.as_path())
+                && supervisor.loaded_overrides() == overrides
+            {
+                supervisor.touch();
+                return Ok(Some(port));
+            }
+
+            log::info!(
+                "worklog: loaded model/params do not match summary requirements, restarting engine"
+            );
+            supervisor.stop().await.map_err(|e| e.to_string())?;
+        }
+    }
+
+    supervisor
+        .start_with_overrides(Some(main_path), mmproj_path, overrides)
+        .await
+        .map(Some)
+        .map_err(|e| e.to_string())
+}
+
 /// Work Log 페이지에서 "스크린샷 분석 기반 구체적 작업 묘사"를 생성한다.
 ///
-/// 1. MemoryDb text_sessions에서 해당 시간대 OCR 텍스트를 조회
-/// 2. 없으면 main DbPool activities에서 process_name + window_title을 fallback
+/// 1. MemoryDb text_sessions와 main DbPool activities에서 해당 시간대 근거를 모두 조회
+/// 2. OCR과 process_name + window_title을 구획된 context로 결합
 /// 3. LLM에 프롬프트를 넣어 구체적 작업 묘사를 생성
 #[tauri::command]
 pub async fn generate_work_description(
@@ -470,42 +793,53 @@ pub async fn generate_work_description(
     end_ms: i64,
     summary: String,
 ) -> Result<String, String> {
-    // 1. OCR 텍스트 조회 (MemoryDb)
-    let context_text = if let Some(ref mem_db) = mem.0 {
-        let ocr = query_ocr_text(mem_db, &date, start_ms, end_ms).await?;
-        if !ocr.is_empty() {
-            ocr
-        } else {
-            // fallback: activities
-            query_activities_fallback(&pool, &date, start_ms, end_ms).await?
-        }
+    // 1. Compacted OCR summaries are preferred; unprocessed local raw OCR fills gaps.
+    let ocr_text = if let Some(ref mem_db) = mem.0 {
+        query_ocr_evidence(mem_db, start_ms, end_ms).await?
     } else {
-        // MemoryDb 불가: activities fallback only
-        query_activities_fallback(&pool, &date, start_ms, end_ms).await?
+        String::new()
     };
+    let activity_text = query_activities(&pool, &date, start_ms, end_ms).await?;
 
-    if context_text.trim().is_empty() {
+    if ocr_text.trim().is_empty() && activity_text.trim().is_empty() {
         return Err(" 해당 시간대에 스크린샷 OCR 텍스트 또는 활동 기록이 없습니다.".into());
     }
 
-    // 2. 프롬프트 빌드
-    let (system, user_text) = build_description_prompt(&date, start_ms, end_ms, &summary, &context_text);
-
-    // 3. LLM 호출 (기존 infra 재사용)
+    // 2. 모델 context/output 예산에 맞춰 Work Item·활동을 우선 보존하고 OCR을 샘플링한다.
     let cfg = settings::load(&pool).await.map_err(String::from)?;
     let ai = &cfg.ai;
+    let ctx_size = ai.summary_ctx_size_effective().unwrap_or(DEFAULT_CTX_SIZE);
+    let (budgeted_summary, context_text) = build_budgeted_inputs_with_template(
+        ctx_size,
+        ai.summary_max_tokens(),
+        &summary,
+        &activity_text,
+        &ocr_text,
+        &ai.jira_worklog_prompt,
+    );
+
+    // 3. 프롬프트 빌드
+    let (system, user_text) = build_description_prompt_with_template(
+        &date,
+        start_ms,
+        end_ms,
+        &budgeted_summary,
+        &context_text,
+        &ai.jira_worklog_prompt,
+    );
+
+    // 4. LLM 호출 (기존 infra 재사용)
     let step2 = if ai.summary_use_cloud() {
-        crate::ai::summary_operations::build_step2(ai, 0, "")
-            .map_err(|e| e.to_string())?
+        crate::ai::summary_operations::build_step2(ai, 0, "").map_err(|e| e.to_string())?
     } else {
-        let st = supervisor.status().await;
-        let port = st.port.ok_or_else(|| {
-            "LLM 엔진이 실행 중이지 않습니다. 엔진을 먼저 시작하세요.".to_string()
-        })?;
+        let port = ensure_summary_engine(&supervisor, ai)
+            .await?
+            .ok_or_else(|| "로컬 summary 엔진을 시작하지 못했습니다.".to_string())?;
         crate::ai::summary_operations::build_step2(ai, port, ai.effective_summary_main())
             .map_err(|e| e.to_string())?
     };
 
+    let _inference_guard = (!ai.summary_use_cloud()).then(|| supervisor.acquire_inference());
     let (content, _usage) = step2
         .chat(&system, &user_text, &[])
         .await
@@ -517,22 +851,347 @@ pub async fn generate_work_description(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ai::config::SUMMARY_CLOUD_SENTINEL;
+
+    fn ms(timestamp: &str) -> i64 {
+        DateTime::parse_from_rfc3339(timestamp)
+            .unwrap()
+            .timestamp_millis()
+    }
+
+    #[tokio::test]
+    async fn compacted_summary_is_preferred_over_raw_and_other_statuses() {
+        let db = MemoryDb::open_in_memory().await.unwrap();
+        db.0.call(|conn| {
+            conn.execute(
+                "INSERT INTO text_sessions(
+                        local_date, started_ts, ended_ts, app_id, title, text, guid
+                     ) VALUES ('2026-09-20', '2026-09-20T10:00:00Z',
+                               '2026-09-20T10:30:00Z', 'Code', 'main.rs',
+                               'raw should not be used', 'compact-guid')",
+                [],
+            )
+            .db()?;
+            conn.execute(
+                "INSERT INTO ocr_task_summaries(
+                        source_session_guid, local_date, started_ts, ended_ts,
+                        app_id, title, summary, status, updated_ts
+                     ) VALUES ('compact-guid', '2026-09-20',
+                               '2026-09-20T10:00:00Z', '2026-09-20T10:30:00Z',
+                               'Code', 'main.rs', 'successful compacted work', 'success',
+                               '2026-09-20T10:31:00Z')",
+                [],
+            )
+            .db()?;
+            conn.execute(
+                "INSERT INTO ocr_task_summaries(
+                        source_session_guid, local_date, started_ts, ended_ts,
+                        app_id, title, summary, status, updated_ts
+                     ) VALUES ('ignored-guid', '2026-09-20',
+                               '2026-09-20T10:00:00Z', '2026-09-20T10:30:00Z',
+                               'Code', 'main.rs', 'must not appear', 'deferred',
+                               '2026-09-20T10:31:00Z')",
+                [],
+            )
+            .db()?;
+            Ok(())
+        })
+        .await
+        .unwrap();
+
+        let evidence =
+            query_ocr_evidence(&db, ms("2026-09-20T09:00:00Z"), ms("2026-09-20T11:00:00Z"))
+                .await
+                .unwrap();
+        assert!(evidence.contains("[COMPACTED OCR SUMMARY]"));
+        assert!(evidence.contains("successful compacted work"));
+        assert!(evidence.contains("앱: Code"));
+        assert!(evidence.contains("창 제목: main.rs"));
+        assert!(!evidence.contains("raw should not be used"));
+        assert!(!evidence.contains("must not appear"));
+    }
+
+    #[tokio::test]
+    async fn raw_ocr_is_used_when_session_is_not_compacted() {
+        let db = MemoryDb::open_in_memory().await.unwrap();
+        db.0.call(|conn| {
+            conn.execute(
+                "INSERT INTO text_sessions(
+                        local_date, started_ts, ended_ts, app_id, title, text, guid
+                     ) VALUES ('2026-09-20', '2026-09-20T10:00:00Z',
+                               '2026-09-20T10:30:00Z', 'Terminal', 'cargo test',
+                               'raw fallback evidence', 'raw-guid')",
+                [],
+            )
+            .db()?;
+            Ok(())
+        })
+        .await
+        .unwrap();
+
+        let evidence =
+            query_ocr_evidence(&db, ms("2026-09-20T09:00:00Z"), ms("2026-09-20T11:00:00Z"))
+                .await
+                .unwrap();
+        assert!(evidence.contains("[RAW OCR]"));
+        assert!(evidence.contains("raw fallback evidence"));
+    }
+
+    #[tokio::test]
+    async fn prior_day_compacted_summary_overlapping_selected_day_is_included() {
+        let db = MemoryDb::open_in_memory().await.unwrap();
+        db.0.call(|conn| {
+            conn.execute(
+                "INSERT INTO ocr_task_summaries(
+                    source_session_guid, local_date, started_ts, ended_ts,
+                    app_id, title, summary, status, updated_ts
+                 ) VALUES ('overnight-summary', '2026-09-19',
+                           '2026-09-19T23:30:00Z', '2026-09-20T00:30:00Z',
+                           'Code', 'night.rs', 'prior-day compacted evidence', 'success',
+                           '2026-09-20T00:31:00Z')",
+                [],
+            )
+            .db()?;
+            Ok(())
+        })
+        .await
+        .unwrap();
+
+        let evidence =
+            query_ocr_evidence(&db, ms("2026-09-20T00:00:00Z"), ms("2026-09-20T01:00:00Z"))
+                .await
+                .unwrap();
+        assert!(evidence.contains("prior-day compacted evidence"));
+    }
+
+    #[tokio::test]
+    async fn prior_day_raw_fallback_overlapping_selected_day_is_included() {
+        let db = MemoryDb::open_in_memory().await.unwrap();
+        db.0.call(|conn| {
+            conn.execute(
+                "INSERT INTO text_sessions(
+                    local_date, started_ts, ended_ts, text, guid
+                 ) VALUES ('2026-09-19', '2026-09-19T23:30:00Z',
+                           '2026-09-20T00:30:00Z', 'prior-day raw evidence',
+                           'overnight-raw')",
+                [],
+            )
+            .db()?;
+            Ok(())
+        })
+        .await
+        .unwrap();
+
+        let evidence =
+            query_ocr_evidence(&db, ms("2026-09-20T00:00:00Z"), ms("2026-09-20T01:00:00Z"))
+                .await
+                .unwrap();
+        assert!(evidence.contains("prior-day raw evidence"));
+    }
+
+    #[tokio::test]
+    async fn ocr_overlap_uses_strict_time_boundaries() {
+        let db = MemoryDb::open_in_memory().await.unwrap();
+        db.0.call(|conn| {
+            for (guid, start, end, text) in [
+                (
+                    "before",
+                    "2026-09-20T09:00:00Z",
+                    "2026-09-20T10:00:00Z",
+                    "touches start only",
+                ),
+                (
+                    "overlap",
+                    "2026-09-20T09:59:00Z",
+                    "2026-09-20T10:01:00Z",
+                    "overlaps boundary",
+                ),
+                (
+                    "after",
+                    "2026-09-20T11:00:00Z",
+                    "2026-09-20T12:00:00Z",
+                    "touches end only",
+                ),
+            ] {
+                conn.execute(
+                    "INSERT INTO text_sessions(
+                            local_date, started_ts, ended_ts, text, guid
+                         ) VALUES ('2026-09-20', ?1, ?2, ?3, ?4)",
+                    rusqlite::params![start, end, text, guid],
+                )
+                .db()?;
+            }
+            Ok(())
+        })
+        .await
+        .unwrap();
+
+        let evidence =
+            query_ocr_evidence(&db, ms("2026-09-20T10:00:00Z"), ms("2026-09-20T11:00:00Z"))
+                .await
+                .unwrap();
+        assert!(evidence.contains("overlaps boundary"));
+        assert!(!evidence.contains("touches start only"));
+        assert!(!evidence.contains("touches end only"));
+    }
+
+    #[test]
+    fn compacted_labels_keep_prompt_budget_protection() {
+        let evidence =
+            "[COMPACTED OCR SUMMARY]\n시간: 10:00 ~ 10:30\n앱: Code\n창 제목: main.rs\n근거:\n요약";
+        let (budgeted_summary, context) =
+            build_budgeted_inputs(4096, 1024, "Work Item context", "Code — main.rs", evidence);
+        let budget = worklog_content_budget(4096, 1024);
+
+        assert!(context.contains("[COMPACTED OCR SUMMARY]"));
+        assert!(budgeted_summary.chars().count() + context.chars().count() <= budget);
+    }
+
+    #[test]
+    fn configured_worklog_template_is_appended_without_replacing_fixed_rules() {
+        let (system, _) = build_description_prompt_with_template(
+            "2026-09-20",
+            ms("2026-09-20T10:00:00Z"),
+            ms("2026-09-20T11:00:00Z"),
+            "Work Item",
+            "evidence",
+            "Focus on the requested acceptance criteria.",
+        );
+
+        assert!(system.contains("[사용자 지정 Work Log 지침]"));
+        assert!(system.contains("Focus on the requested acceptance criteria."));
+        assert!(system.contains("근거가 없으면 '수정했다', '설계했다', '완료했다'"));
+        let template_end = system.find("[사용자 지정 Work Log 지침 끝]").unwrap();
+        let fixed_rule = system.find("[고정 최종 규칙]").unwrap();
+        assert!(fixed_rule > template_end);
+        assert!(system[fixed_rule..].contains("사실성·근거·증거 보존 규칙과 충돌하면"));
+    }
+
+    #[test]
+    fn configured_worklog_template_is_reserved_before_evidence_budget() {
+        let template = "사용자 지침 ".repeat(100);
+        let base_budget = worklog_content_budget(4096, 1024);
+        let configured_budget = worklog_content_budget_with_template(4096, 1024, &template);
+        assert!(configured_budget < base_budget);
+
+        let (budgeted_summary, context) = build_budgeted_inputs_with_template(
+            4096,
+            1024,
+            "Work Item context",
+            "Code — main.rs",
+            &"OCR evidence ".repeat(1_000),
+            &template,
+        );
+        assert!(budgeted_summary.chars().count() + context.chars().count() <= configured_budget);
+    }
 
     #[test]
     fn build_description_prompt_includes_all_fields() {
-        let (sys, usr) = build_description_prompt(
-            "2026-09-17",
-            1_726_545_600_000,  // epoch ms
-            1_726_549_200_000,
+        let (_, context) = build_budgeted_inputs(
+            8192,
+            4096,
             "ACU 기능 시험",
             "Visual Studio Code — main.rs\nChrome — Jira 보고서",
+            "main.rs의 함수 구현 검토",
+        );
+        let (sys, usr) = build_description_prompt(
+            "2026-09-17",
+            1_726_545_600_000, // epoch ms
+            1_726_549_200_000,
+            "ACU 기능 시험",
+            &context,
         );
         assert!(sys.contains("OCR"));
         assert!(sys.contains("평문만"));
+        assert!(sys.contains("구체적인 한국어"));
+        assert!(sys.contains("단정하지 말고"));
         assert!(usr.contains("2026-09-17"));
+        assert!(usr.contains("Work Item 컨텍스트"));
         assert!(usr.contains("ACU 기능 시험"));
+        assert!(usr.contains("[OCR 텍스트 시작]"));
+        assert!(usr.contains("[활동 기록(process_name + window_title) 시작]"));
         assert!(usr.contains("Visual Studio Code"));
         assert!(usr.contains("Chrome"));
+    }
+
+    #[test]
+    fn budgeted_context_combines_ocr_and_activity_sections() {
+        let (_, context) = build_budgeted_inputs(
+            8192,
+            4096,
+            "Work Item",
+            "VS Code — main.rs",
+            "  main.rs 구현 검토  ",
+        );
+
+        assert!(context.contains("[OCR 텍스트 시작]"));
+        assert!(context.contains("main.rs 구현 검토"));
+        assert!(context.contains("[활동 기록(process_name + window_title) 시작]"));
+        assert!(context.contains("VS Code — main.rs"));
+    }
+
+    #[test]
+    fn budgeted_inputs_sample_large_ocr_across_time_and_relevance() {
+        let ocr = (0..6000)
+            .map(|index| {
+                if index == 3047 {
+                    format!("ocr-{index} TEST-LOCAL-1 main.rs 관련 화면 내용")
+                } else {
+                    format!("ocr-{index} 시간대 대표 화면 내용")
+                }
+            })
+            .collect::<Vec<_>>()
+            .join("\n---\n");
+        let summary = "TEST-LOCAL-1 main.rs 구현 검토";
+        let activity = "VS Code — main.rs\nChrome — TEST-LOCAL-1";
+        let (budgeted_summary, context) =
+            build_budgeted_inputs(8192, 4096, summary, activity, &ocr);
+        let budget = worklog_content_budget(8192, 4096);
+
+        assert!(ocr.chars().count() > 126_934);
+        assert!(budgeted_summary.chars().count() + context.chars().count() <= budget);
+        assert!(context.contains("TEST-LOCAL-1 main.rs"));
+        assert!(context.contains("ocr-0"));
+        assert!(context.contains("ocr-5999"));
+        assert!(context.contains("OCR 일부만 포함"));
+    }
+
+    #[test]
+    fn default_summary_context_cap_reserves_output_tokens() {
+        let ai = AiConfig::default();
+        let ctx_size = ai.summary_ctx_size_effective().unwrap_or(DEFAULT_CTX_SIZE);
+
+        assert_eq!(ctx_size, 8192);
+        assert_eq!(ai.summary_max_tokens(), 4096);
+        assert!(worklog_content_budget(ctx_size, ai.summary_max_tokens()) < 4096);
+    }
+
+    #[test]
+    fn summary_engine_overrides_use_effective_values() {
+        let mut ai = AiConfig::default();
+        ai.batch_size = Some(32);
+        ai.parallel_slots = Some(2);
+        ai.ctx_size = Some(4096);
+
+        assert_eq!(
+            summary_engine_overrides(&ai),
+            EngineStartOverrides {
+                batch_size: Some(32),
+                parallel_slots: Some(2),
+                ctx_size: Some(4096),
+            }
+        );
+    }
+
+    #[tokio::test]
+    async fn cloud_summary_skips_local_engine_startup() {
+        let mut ai = AiConfig::default();
+        ai.external_enabled = true;
+        ai.summary_main = SUMMARY_CLOUD_SENTINEL.to_string();
+
+        let supervisor = Arc::new(EngineSupervisor::new());
+        assert_eq!(ensure_summary_engine(&supervisor, &ai).await.unwrap(), None);
+        assert_eq!(supervisor.status().await.state, EngineState::Stopped);
     }
 
     #[test]

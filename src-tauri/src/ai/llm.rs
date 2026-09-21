@@ -90,6 +90,67 @@ impl ChatClient {
         &self.model
     }
 
+    /// The output reservation actually sent with each local completion.
+    pub fn max_tokens(&self) -> u32 {
+        self.max_tokens
+    }
+
+    /// Apply llama-server's b9025 chat template and count the resulting token
+    /// ids with the server's own tokenizer. Images are intentionally rejected:
+    /// compaction is text-only and must use one exact request shape.
+    pub async fn exact_input_tokens(
+        &self,
+        system: &str,
+        user_text: &str,
+        image_data_uris: &[String],
+    ) -> Result<u32> {
+        if !image_data_uris.is_empty() {
+            return Err(Error::InvalidInput(
+                "exact local token counting does not accept images",
+            ));
+        }
+        let body = build_chat_body_local(
+            &self.model,
+            system,
+            user_text,
+            image_data_uris,
+            self.max_tokens,
+        );
+        let root = self.base_url.strip_suffix("/v1").unwrap_or(&self.base_url);
+        let response = self
+            .http
+            .post(format!("{root}/apply-template"))
+            .json(&body)
+            .send()
+            .await
+            .map_err(|e| Error::LlmResponse(crate::commands::ai_endpoint::fmt_send_err(e)))?;
+        let status = response.status();
+        let body = response
+            .text()
+            .await
+            .map_err(|e| Error::LlmResponse(format!("apply-template response read failed: {e}")))?;
+        let prompt = parse_apply_template_http(status.as_u16(), &body)?;
+
+        let response = self
+            .http
+            .post(format!("{root}/tokenize"))
+            .json(&serde_json::json!({
+                "content": prompt,
+                "add_special": true,
+                "parse_special": true,
+                "with_pieces": false,
+            }))
+            .send()
+            .await
+            .map_err(|e| Error::LlmResponse(crate::commands::ai_endpoint::fmt_send_err(e)))?;
+        let status = response.status();
+        let body = response
+            .text()
+            .await
+            .map_err(|e| Error::LlmResponse(format!("tokenize response read failed: {e}")))?;
+        parse_tokenize_http(status.as_u16(), &body)
+    }
+
     /// 发一条 multimodal chat 请求。
     ///
     /// `image_data_uris` 每项是 `data:image/jpeg;base64,...` 格式。
@@ -222,7 +283,7 @@ impl ExternalChatClient {
                         return Err(e);
                     }
                     heal_rounds += 1;
-                    log::warn!("云端 API 400,按错误信息自愈后重试(第 {heal_rounds} 轮)");
+                    log::warn!("cloud API 400, self-healing by error message then retry (round {heal_rounds})");
                 }
                 SendOutcome::Transient(e) => {
                     transient += 1;
@@ -231,7 +292,7 @@ impl ExternalChatClient {
                     }
                     let wait = Duration::from_secs(2 * u64::from(transient));
                     log::warn!(
-                        "云端 API 传输层瞬断（第 {transient}/{TRANSIENT_MAX} 次）：{e}；{}s 后原样重试",
+                        "cloud API transport transient disconnect ({transient}/{TRANSIENT_MAX}): {e}; retrying in {}s",
                         wait.as_secs()
                     );
                     tokio::time::sleep(wait).await;
@@ -248,7 +309,7 @@ impl ExternalChatClient {
                     let exp = Duration::from_secs(1u64 << attempt);
                     let wait = retry_after.map_or(exp, |ra| ra.max(exp));
                     log::info!(
-                        "云端 API 限流（429），第 {attempt} 次退避 {}s 后重试",
+                        "cloud API rate-limited (429), attempt #{attempt} backing off {}s before retry",
                         wait.as_secs()
                     );
                     tokio::time::sleep(wait).await;
@@ -281,6 +342,33 @@ impl Step2Chat {
         match self {
             Step2Chat::Local(c) => c.chat_with_images(system, user_text, image_data_uris).await,
             Step2Chat::External(c) => c.chat_text(system, user_text, image_data_uris).await,
+        }
+    }
+
+    /// Count tokens using the exact b9025 template/tokenize path the local
+    /// `chat` call uses.
+    pub async fn exact_input_tokens(
+        &self,
+        system: &str,
+        user_text: &str,
+        image_data_uris: &[String],
+    ) -> Result<u32> {
+        match self {
+            Step2Chat::Local(c) => {
+                c.exact_input_tokens(system, user_text, image_data_uris)
+                    .await
+            }
+            Step2Chat::External(_) => Err(Error::InvalidInput(
+                "exact local token counting is local-engine only",
+            )),
+        }
+    }
+
+    /// Output reservation sent in the completion request.
+    pub fn max_tokens(&self) -> u32 {
+        match self {
+            Step2Chat::Local(c) => c.max_tokens(),
+            Step2Chat::External(c) => c.max_tokens,
         }
     }
 
@@ -329,6 +417,52 @@ fn build_chat_body_local(
     );
     body["chat_template_kwargs"] = json!({ "enable_thinking": false });
     body
+}
+
+fn parse_apply_template_http(status: u16, body: &str) -> Result<String> {
+    #[derive(Deserialize)]
+    struct ApplyTemplateResponse {
+        prompt: String,
+    }
+
+    if !(200..300).contains(&status) {
+        return Err(Error::LlmResponse(format!(
+            "apply-template returned HTTP {status}: {}",
+            body.chars().take(200).collect::<String>()
+        )));
+    }
+    let parsed: ApplyTemplateResponse = serde_json::from_str(body)
+        .map_err(|e| Error::LlmResponse(format!("malformed apply-template response: {e}")))?;
+    if parsed.prompt.is_empty() {
+        return Err(Error::LlmResponse(
+            "apply-template returned an empty prompt".to_string(),
+        ));
+    }
+    Ok(parsed.prompt)
+}
+
+fn parse_tokenize_http(status: u16, body: &str) -> Result<u32> {
+    #[derive(Deserialize)]
+    struct TokenizeResponse {
+        tokens: Vec<u32>,
+    }
+
+    if !(200..300).contains(&status) {
+        return Err(Error::LlmResponse(format!(
+            "tokenize returned HTTP {status}: {}",
+            body.chars().take(200).collect::<String>()
+        )));
+    }
+    let parsed: TokenizeResponse = serde_json::from_str(body)
+        .map_err(|e| Error::LlmResponse(format!("malformed tokenize response: {e}")))?;
+    let count = u32::try_from(parsed.tokens.len())
+        .map_err(|_| Error::LlmResponse("tokenize returned too many token ids".to_string()))?;
+    if count == 0 {
+        return Err(Error::LlmResponse(
+            "tokenize returned zero token ids".to_string(),
+        ));
+    }
+    Ok(count)
 }
 
 fn build_chat_body(
@@ -961,6 +1095,35 @@ mod tests {
         // 与 chat 侧共用同一份口径——两边分歧正是这条 bug 的根因
         assert_eq!(budget_key(true), "max_completion_tokens");
         assert_eq!(budget_key(false), "max_tokens");
+    }
+
+    #[test]
+    fn b9025_template_and_tokenize_responses_are_strict() {
+        assert_eq!(
+            parse_apply_template_http(200, r#"{"prompt":"<bos>hello"}"#).unwrap(),
+            "<bos>hello"
+        );
+        assert!(parse_apply_template_http(200, r#"{"prompt":""}"#).is_err());
+        assert!(parse_apply_template_http(503, r#"{"prompt":"hello"}"#).is_err());
+        assert!(parse_apply_template_http(200, "not-json").is_err());
+        assert_eq!(
+            parse_tokenize_http(200, r#"{"tokens":[1,2,3]}"#).unwrap(),
+            3
+        );
+        assert!(parse_tokenize_http(200, r#"{"tokens":[]}"#).is_err());
+        assert!(parse_tokenize_http(200, r#"{"tokens":["1"]}"#).is_err());
+        assert!(parse_tokenize_http(503, r#"{"tokens":[1]}"#).is_err());
+    }
+
+    #[test]
+    fn b9025_template_request_uses_local_completion_shape() {
+        let chat = build_chat_body_local("model", "system", "user", &[], 2048);
+        let count = build_chat_body_local("model", "system", "user", &[], 2048);
+        assert_eq!(count, chat);
+        assert_eq!(count["messages"][0]["role"], "system");
+        assert_eq!(count["messages"][1]["content"], "user");
+        assert_eq!(count["max_tokens"], 2048);
+        assert_eq!(count["chat_template_kwargs"]["enable_thinking"], false);
     }
 
     /// 摘要侧接上自愈后,老网关拒收新字段名也能自救:

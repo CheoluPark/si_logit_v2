@@ -2,7 +2,7 @@
  *
  * ## 数据 vs 代码
  *
- * 三套语言的 prompt 文本是 *数据*，权威源在 [src-tauri/resources/prompts/](../../src-tauri/resources/prompts/)，
+ * 各语言的 prompt 文本是 *数据*，权威源在 [src-tauri/resources/prompts/](../../src-tauri/resources/prompts/)，
  * 后端通过 `include_str!` 编译时嵌入；前端通过 Vite `?raw` import 复用同一份文件，
  * 编译时嵌入 bundle——零运行时读盘，发布产物自带，改 prompt 内容只动 `.md` 文件，
  * 不动 `.ts` 代码。前后端共用同一权威源，避免双副本漂移。 */
@@ -14,6 +14,7 @@ import jaText from "../../src-tauri/resources/prompts/system_ja.md?raw";
 import ptText from "../../src-tauri/resources/prompts/system_pt.md?raw";
 import twText from "../../src-tauri/resources/prompts/system_tw.md?raw";
 import esText from "../../src-tauri/resources/prompts/system_es.md?raw";
+import koText from "../../src-tauri/resources/prompts/system_ko.md?raw";
 
 /** 内置默认 system prompt（段总结）——按语言索引。 */
 export const DEFAULT_SYSTEM_PROMPTS: Record<PromptLanguage, string> = {
@@ -23,6 +24,7 @@ export const DEFAULT_SYSTEM_PROMPTS: Record<PromptLanguage, string> = {
   ja: jaText.trimEnd(),
   pt: ptText.trimEnd(),
   es: esText.trimEnd(),
+  ko: koText.trimEnd(),
 };
 
 /** 把 PromptLanguage 映射到 PromptOverrides 的字段名。
@@ -30,7 +32,14 @@ export const DEFAULT_SYSTEM_PROMPTS: Record<PromptLanguage, string> = {
  *  穷尽性检查会立刻报错，而不是悄悄返回 undefined。 */
 export function overrideKey(
   lang: PromptLanguage,
-): "systemZh" | "systemTw" | "systemEn" | "systemJa" | "systemPt" | "systemEs" {
+):
+  | "systemZh"
+  | "systemTw"
+  | "systemEn"
+  | "systemJa"
+  | "systemPt"
+  | "systemEs"
+  | "systemKo" {
   switch (lang) {
     case "zh":
       return "systemZh";
@@ -44,5 +53,7 @@ export function overrideKey(
       return "systemPt";
     case "es":
       return "systemEs";
+    case "ko":
+      return "systemKo";
   }
 }

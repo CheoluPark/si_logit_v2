@@ -105,7 +105,7 @@ pub async fn init_self_identity() -> io::Result<DeviceMeta> {
     // 才知道开哪份 DB（hindsight.sqlite vs hindsight.<uid>.sqlite）。
     let root = data_root();
     if let Err(e) = account::migrate_legacy_db(&root).await {
-        log::warn!("legacy DB 迁移失败（继续使用现有 DB）: {e}");
+        log::warn!("Legacy DB migration failed (continuing with existing DB): {e}");
     }
     if let Some(uid) = account::active_uid() {
         log::info!("active_uid: {uid}");
@@ -118,7 +118,7 @@ pub async fn init_self_identity() -> io::Result<DeviceMeta> {
 /// 返回开好的连接池给后续 init 复用。
 pub async fn init_database(dev_meta: &DeviceMeta) -> crate::error::Result<DbPool> {
     let path = db_path()?;
-    log::info!("数据库路径: {}", path.display());
+    log::info!("Database path: {}", path.display());
 
     let pool = DbPool::open(&path).await?;
     storage::migrations::run(&pool).await?;
@@ -145,7 +145,10 @@ pub async fn init_database(dev_meta: &DeviceMeta) -> crate::error::Result<DbPool
                 )
                 .db()?;
             if n > 0 {
-                log::info!("把 {} 条 v8 之前的历史活动 device_id 改为 self", n);
+                log::info!(
+                    "Updated {} pre-v8 historical activities device_id to self",
+                    n
+                );
             }
             Ok(())
         })
@@ -153,7 +156,7 @@ pub async fn init_database(dev_meta: &DeviceMeta) -> crate::error::Result<DbPool
     if let Err(e) = migration {
         // 这次 migration 是 best-effort——失败不阻塞启动，但要留痕。失败后下次启动
         // 还会再跑（条件不变 + 没成功改过的行还在），所以是幂等的，长期收敛。
-        log::warn!("v8 device_id migration 失败（下次启动会重试）: {e}");
+        log::warn!("v8 device_id migration failed (will retry on next launch): {e}");
     }
     Ok(pool)
 }
@@ -259,7 +262,7 @@ fn install_window_handlers(window: &tauri::WebviewWindow) {
             platform::set_dock_icon_visible(win.app_handle(), false);
             if cfg!(target_os = "macos") {
                 remember_geometry(&win);
-                log::info!("关窗销毁 webview（托盘模式），重开时重建");
+                log::info!("Window closed, webview destroyed (tray mode), will recreate on reopen");
             } else {
                 api.prevent_close();
                 let _ = win.hide();
@@ -299,7 +302,7 @@ pub fn show_or_recreate_main(app: &AppHandle) {
         .find(|c| c.label == "main")
         .cloned()
     else {
-        log::error!("重建主窗口失败：配置里没有 label=main 的窗口");
+        log::error!("Failed to recreate main window: no window with label=main in config");
         return;
     };
     let geom = *MAIN_GEOMETRY.lock().unwrap();
@@ -315,11 +318,11 @@ pub fn show_or_recreate_main(app: &AppHandle) {
             install_window_handlers(&w);
             let _ = w.set_focus();
             log::info!(
-                "主窗口重建完成（Rust 侧 {}ms，前端装载另计）",
+                "Main window recreated ({}ms on Rust side, frontend loading additional)",
                 t.elapsed().as_millis()
             );
         }
-        Err(e) => log::error!("重建主窗口失败: {e}"),
+        Err(e) => log::error!("Failed to recreate main window: {e}"),
     }
 }
 
@@ -459,13 +462,13 @@ pub fn migrate_autostart_launch_agent(app: &AppHandle) {
         return;
     }
     if let Err(e) = fs::remove_file(&plist) {
-        log::warn!("autostart 迁移：删除旧 LaunchAgent plist 失败: {e}");
+        log::warn!("Autostart migration: failed to delete old LaunchAgent plist: {e}");
         return;
     }
     use tauri_plugin_autostart::ManagerExt;
     match app.autolaunch().enable() {
-        Ok(()) => log::info!("autostart 已迁移：LaunchAgent → 登录项（登录项列表显示应用名）"),
-        Err(e) => log::warn!("autostart 迁移：登录项注册失败（需用户在设置里重开自启）: {e}"),
+        Ok(()) => log::info!("Autostart migrated: LaunchAgent → Login Item (app name shown in Login Items)"),
+        Err(e) => log::warn!("Autostart migration: login item registration failed (toggle auto-start in settings to retry): {e}"),
     }
 }
 
@@ -479,9 +482,9 @@ pub fn spawn_backfill_tasks(pool: DbPool) {
     let pool_for_icons = pool.clone();
     tokio::spawn(async move {
         match crate::repo::app_icons::backfill_db_from_cache_or_extract(&pool_for_icons).await {
-            Ok(n) if n > 0 => log::info!("icon backfill: 新增 {n} 行 app_icons"),
+            Ok(n) if n > 0 => log::info!("Icon backfill: added {n} app_icons rows"),
             Ok(_) => {}
-            Err(e) => log::warn!("icon backfill 失败: {e}"),
+            Err(e) => log::warn!("Icon backfill failed: {e}"),
         }
     });
 
@@ -494,18 +497,18 @@ pub fn spawn_backfill_tasks(pool: DbPool) {
         // 保持未分类。两者都幂等，重启重跑零代价。
         match crate::repo::cross_os_aliases::pair_existing(&pool).await {
             Ok(n) if n > 0 => {
-                log::info!("cross-OS alias backfill: 合并 {n} 个 app_group_member")
+                log::info!("Cross-OS alias backfill: merged {n} app_group_member")
             }
             Ok(_) => {}
-            Err(e) => log::warn!("cross-OS alias backfill 失败: {e}"),
+            Err(e) => log::warn!("Cross-OS alias backfill failed: {e}"),
         }
 
         match crate::repo::builtin_categories::backfill_builtin_categories(&pool).await {
             Ok(n) if n > 0 => {
-                log::info!("builtin category backfill: 自动归类 {n} 个 app_group")
+                log::info!("Builtin category backfill: auto-categorized {n} app_group")
             }
             Ok(_) => {}
-            Err(e) => log::warn!("builtin category backfill 失败: {e}"),
+            Err(e) => log::warn!("Builtin category backfill failed: {e}"),
         }
     });
 }

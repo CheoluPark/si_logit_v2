@@ -109,7 +109,7 @@ pub async fn download_model(
                 total,
             };
             if let Err(e) = app_for_emit.emit(MODEL_PROGRESS_EVENT, &payload) {
-                log::warn!("emit {MODEL_PROGRESS_EVENT} 失败: {e}");
+                log::warn!("Failed to emit {MODEL_PROGRESS_EVENT}: {e}");
             }
         },
     )
@@ -147,7 +147,7 @@ pub async fn import_model(
             total,
         };
         if let Err(e) = app_for_emit.emit(MODEL_PROGRESS_EVENT, &payload) {
-            log::warn!("emit {MODEL_PROGRESS_EVENT} 失败: {e}");
+            log::warn!("Failed to emit {MODEL_PROGRESS_EVENT}: {e}");
         }
     })
     .await

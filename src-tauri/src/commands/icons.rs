@@ -8,7 +8,7 @@ use crate::storage::DbPool;
 /// 解析某 process_name 的 PNG 图标字节。三层 fallback（顺序不变）：
 /// 1. 文件 cache（icons/<sanitized>.png）—— 直接读文件
 /// 2. DB blob（同步过来的图标）—— 写文件 cache
-/// 3. 本机 exe 提取（GDI / plist）—— 提取后写 DB + outbox + 文件 cache
+/// 3. 本机 exe 提取（GDI / plist）—— 提取后写 DB + 文件 cache
 ///
 /// 全部落空返回 None。
 async fn resolve_icon_png(pool: &DbPool, process_name: &str) -> Result<Option<Vec<u8>>, String> {
@@ -51,9 +51,9 @@ async fn resolve_icon_png(pool: &DbPool, process_name: &str) -> Result<Option<Ve
 
     write_cache_file(&cache_path, &png);
 
-    // 写 DB + outbox：让其它设备拉得到这张图。失败不影响 UI 返回（log 一下）。
+    // 写 DB；失败不影响 UI 返回（log 一下）。
     if let Err(e) = app_icons::upsert_local(pool, process_name, &png).await {
-        log::warn!("app_icons upsert 失败 process={process_name}: {e}");
+        log::warn!("app_icons upsert failed process={process_name}: {e}");
     }
 
     Ok(Some(png))

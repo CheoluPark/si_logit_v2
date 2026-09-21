@@ -1,7 +1,7 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { useLocation } from "react-router-dom";
 import { useTranslation } from "react-i18next";
-import { NAV_ITEMS, ROUTES } from "../../config/nav";
+import { NAV_ITEMS } from "../../config/nav";
 import type { NavGroup } from "../../types/nav";
 import { NavItem } from "./NavItem";
 import { StatusFooter } from "./StatusFooter";
@@ -112,7 +112,7 @@ export function Sidebar() {
         />
 
         {groups.map((group) => {
-          const items = NAV_ITEMS.filter((item) => item.group === group && item.path !== ROUTES.devices);
+          const items = NAV_ITEMS.filter((item) => item.group === group);
           if (items.length === 0) return null;
 
           return (

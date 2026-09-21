@@ -18,7 +18,7 @@ export default function JiraMcpTab() {
     (v: string) => {
       if (!ai) return;
       updateAi({
-        jiraMcp: { ...jira, url: v, pat: jira?.pat ?? "", transport: jira?.transport ?? "remote" },
+        jiraMcp: { url: v, pat: jira?.pat ?? "" },
       });
     },
     [ai, jira, updateAi],
@@ -28,10 +28,17 @@ export default function JiraMcpTab() {
     (v: string) => {
       if (!ai) return;
       updateAi({
-        jiraMcp: { ...jira, url: jira?.url ?? "", pat: v, transport: jira?.transport ?? "remote" },
+        jiraMcp: { url: jira?.url ?? "", pat: v },
       });
     },
     [ai, jira, updateAi],
+  );
+
+  const updateWorklogPrompt = useCallback(
+    (value: string) => {
+      updateAi({ jiraWorklogPrompt: Array.from(value).slice(0, 1000).join("") });
+    },
+    [updateAi],
   );
 
   if (!ai) return null;
@@ -44,42 +51,66 @@ export default function JiraMcpTab() {
         description={t("aiSettings.jiraMcp.description")}
       >
         {/* Server URL */}
-        <Row label={t("aiSettings.jiraMcp.urlLabel")}>
-          <input
-            className={styles.externalInput}
-            type="url"
-            value={jira?.url ?? ""}
-            onChange={(e) => updateUrl(e.target.value)}
-            placeholder={t("aiSettings.jiraMcp.urlPlaceholder")}
-            spellCheck={false}
-            autoComplete="url"
-          />
-        </Row>
-
-        {/* Personal Access Token */}
-        <Row label={t("aiSettings.jiraMcp.patLabel")}>
-          <div className={localStyles.patField}>
+        <div className={localStyles.wideField}>
+          <Row label={t("aiSettings.jiraMcp.urlLabel")}>
             <input
               className={styles.externalInput}
-              type={showPat ? "text" : "password"}
-              value={jira?.pat ?? ""}
-              onChange={(e) => updatePat(e.target.value)}
-              placeholder={t("aiSettings.jiraMcp.patPlaceholder")}
+              type="url"
+              value={jira?.url ?? ""}
+              onChange={(e) => updateUrl(e.target.value)}
+              placeholder={t("aiSettings.jiraMcp.urlPlaceholder")}
               spellCheck={false}
-              autoComplete="off"
+              autoComplete="url"
             />
-            <button
-              type="button"
-              className={localStyles.patToggle}
-              onClick={() => setShowPat((p) => !p)}
-              aria-label={showPat ? "Hide token" : "Show token"}
-              tabIndex={-1}
-            >
-              <KeyRound size={14} strokeWidth={2} />
-            </button>
+          </Row>
+        </div>
+
+        {/* Personal Access Token */}
+        <div className={localStyles.wideField}>
+          <Row label={t("aiSettings.jiraMcp.patLabel")}>
+            <div className={localStyles.patField}>
+              <input
+                className={styles.externalInput}
+                type={showPat ? "text" : "password"}
+                value={jira?.pat ?? ""}
+                onChange={(e) => updatePat(e.target.value)}
+                placeholder={t("aiSettings.jiraMcp.patPlaceholder")}
+                spellCheck={false}
+                autoComplete="off"
+              />
+              <button
+                type="button"
+                className={localStyles.patToggle}
+                onClick={() => setShowPat((p) => !p)}
+                aria-label={showPat ? "Hide token" : "Show token"}
+                tabIndex={-1}
+              >
+                <KeyRound size={14} strokeWidth={2} />
+              </button>
+            </div>
+          </Row>
+        </div>
+
+        <Row
+          label={t("aiSettings.jiraMcp.worklogPromptLabel")}
+          description={t("aiSettings.jiraMcp.worklogPromptDescription")}
+          block
+        >
+          <div className={localStyles.worklogPrompt}>
+            <textarea
+              className={styles.textarea}
+              value={ai.jiraWorklogPrompt ?? ""}
+              onChange={(e) => updateWorklogPrompt(e.target.value)}
+              placeholder={t("aiSettings.jiraMcp.worklogPromptPlaceholder")}
+              rows={6}
+            />
+            <span className={localStyles.characterCount} aria-live="polite">
+              {t("aiSettings.jiraMcp.characterCount", {
+                count: Array.from(ai.jiraWorklogPrompt ?? "").length,
+              })}
+            </span>
           </div>
         </Row>
-
 
       </Section>
     </div>

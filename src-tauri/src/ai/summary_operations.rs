@@ -130,7 +130,7 @@ pub(crate) async fn summarize_segment(
     // emit segment_done 把当前 row 推给前端（至少能看到红色 error badge + 错误描述）。
     if let Err(e) = ai_summaries::upsert_segment(pool, &row).await {
         log::error!(
-            "ai_summaries upsert 失败（段 {} status={}）：{e}",
+            "ai_summaries upsert failed (segment {} status={}): {e}",
             row.segment_idx,
             row.status,
         );

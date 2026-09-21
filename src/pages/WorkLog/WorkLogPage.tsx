@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import {
   ClipboardList,
@@ -30,7 +30,20 @@ import styles from "./WorkLogPage.module.css";
 
 interface MappingState {
   workLogText: string;
+  analysisError?: string;
 }
+
+const LOCAL_FIXTURE_ITEM: WorkItem = {
+  key: "TEST-LOCAL-1",
+  summary: "OpenCode 및 Hindsight 한국어 AI 요약·채팅 도구 라우팅 개선",
+  status: "TEST FIXTURE",
+  assignee: "local",
+  issueType: "Work Item",
+  background: "한국어 AI 요약 및 채팅 도구 작업 흐름을 확인합니다.",
+  info: "오늘 수집된 활동으로 Work Log 매칭을 검증합니다.",
+  objective: "MCP 없이 기존 추천 Work Log 흐름을 점검합니다.",
+  output: "로컬 매칭 및 Work Log 검증 결과",
+};
 
 /* ------------------------------------------------------------------ */
 /*  Helpers                                                            */
@@ -44,6 +57,32 @@ function offsetToDateStr(dayOffset: number): string {
   const m = String(d.getMonth() + 1).padStart(2, "0");
   const day = String(d.getDate()).padStart(2, "0");
   return `${y}-${m}-${day}`;
+}
+
+function workItemContext(item: WorkItem): string {
+  return [
+    `[업무 요약]\n${item.summary}`,
+    `[배경]\n${item.background}`,
+    `[업무 정보]\n${item.info}`,
+    `[목표]\n${item.objective}`,
+    `[산출물]\n${item.output}`,
+  ].join("\n\n");
+}
+
+function analysisErrorMessage(error: unknown): string {
+  const message =
+    error instanceof Error
+      ? error.message
+      : typeof error === "string"
+        ? error
+        : typeof error === "object" &&
+            error !== null &&
+            "message" in error &&
+            typeof error.message === "string"
+          ? error.message
+          : "";
+  const text = message.trim().slice(0, 300);
+  return text ? `AI 분석 실패: ${text}` : "AI 분석 결과를 가져오지 못했습니다.";
 }
 
 /* ------------------------------------------------------------------ */
@@ -63,6 +102,7 @@ export default function WorkLogPage() {
   const [dayOffset, setDayOffset] = useState(0);
   const [analyzingKey, setAnalyzingKey] = useState<string | null>(null);
   const [activitiesModalKey, setActivitiesModalKey] = useState<string | null>(null);
+  const analysisRequestRef = useRef(0);
 
   const date = useMemo(() => offsetToDateStr(dayOffset), [dayOffset]);
 
@@ -108,6 +148,7 @@ export default function WorkLogPage() {
 
   /* ---- Fetch sessions for current date ---- */
   useEffect(() => {
+    analysisRequestRef.current += 1;
     api
       .getTimelineSessions(date)
       .then(setSessions)
@@ -133,10 +174,11 @@ export default function WorkLogPage() {
   useEffect(() => {
     if (workItems.length === 0) return;
     setMappings(buildMappings(workItems, dayActivities));
-  }, [dayActivities]);
+  }, [dayActivities, workItems, buildMappings]);
 
   /* ---- Fetch work items ---- */
   const handleFetch = useCallback(async () => {
+    analysisRequestRef.current += 1;
     setFetching(true);
     try {
       const items = await api.fetchWorkItems();
@@ -145,11 +187,68 @@ export default function WorkLogPage() {
       setError(null);
     } catch (err) {
       console.error("Failed to fetch work items", err);
+      if (dayOffset === 0) {
+        const matched = keywordMatch(LOCAL_FIXTURE_ITEM.summary, dayActivities);
+        setWorkItems([LOCAL_FIXTURE_ITEM]);
+        setMappings(buildMappings([LOCAL_FIXTURE_ITEM], dayActivities));
+        setError(
+          "Jira MCP 연결에 실패했습니다. 표시된 Work Item은 테스트 항목(TEST-LOCAL-1)입니다.",
+        );
+        if (matched.length > 0) {
+          const startMs = Math.min(...matched.map((activity) => activity.startMs));
+          const endMs = Math.max(...matched.map((activity) => activity.endMs));
+          const requestId = ++analysisRequestRef.current;
+          setAnalyzingKey(LOCAL_FIXTURE_ITEM.key);
+          void api
+            .generateWorkDescription(
+              date,
+              startMs,
+              endMs,
+              workItemContext(LOCAL_FIXTURE_ITEM),
+            )
+            .then((text) => {
+              if (analysisRequestRef.current !== requestId) return;
+              if (!text.trim()) {
+                setMappings((prev) => ({
+                  ...prev,
+                  [LOCAL_FIXTURE_ITEM.key]: {
+                    ...prev[LOCAL_FIXTURE_ITEM.key],
+                    analysisError: "AI 분석 결과를 가져오지 못했습니다.",
+                  },
+                }));
+                return;
+              }
+              setMappings((prev) => ({
+                ...prev,
+                [LOCAL_FIXTURE_ITEM.key]: {
+                  ...prev[LOCAL_FIXTURE_ITEM.key],
+                  workLogText: text,
+                  analysisError: undefined,
+                },
+              }));
+            })
+            .catch((analysisErr) => {
+              console.error("Fixture AI analysis failed", analysisErr);
+              if (analysisRequestRef.current !== requestId) return;
+              setMappings((prev) => ({
+                ...prev,
+                [LOCAL_FIXTURE_ITEM.key]: {
+                  ...prev[LOCAL_FIXTURE_ITEM.key],
+                  analysisError: analysisErrorMessage(analysisErr),
+                },
+              }));
+            })
+            .finally(() => {
+              if (analysisRequestRef.current === requestId) setAnalyzingKey(null);
+            });
+        }
+        return;
+      }
       setError(typeof err === "string" ? err : String(err));
     } finally {
       setFetching(false);
     }
-  }, [dayActivities, buildMappings]);
+  }, [date, dayOffset, dayActivities, buildMappings]);
 
   /* ---- Update a mapping field ---- */
   const updateMapping = useCallback(
@@ -165,26 +264,39 @@ export default function WorkLogPage() {
   /* ---- AI work description analysis ---- */
   const handleAnalyze = useCallback(
     async (item: WorkItem) => {
+      if (analyzingKey) return;
       const matched = matchedByItem.get(item.key) ?? [];
       if (matched.length === 0) return;
       const startMs = Math.min(...matched.map((a) => a.startMs));
       const endMs = Math.max(...matched.map((a) => a.endMs));
+      const requestId = ++analysisRequestRef.current;
       setAnalyzingKey(item.key);
       try {
         const text = await api.generateWorkDescription(
           date,
           startMs,
           endMs,
-          item.summary,
+          workItemContext(item),
         );
-        updateMapping(item.key, { workLogText: text });
+        if (!text.trim()) {
+          if (analysisRequestRef.current === requestId) {
+            updateMapping(item.key, { analysisError: "AI 분석 결과를 가져오지 못했습니다." });
+          }
+          return;
+        }
+        if (analysisRequestRef.current === requestId) {
+          updateMapping(item.key, { workLogText: text, analysisError: undefined });
+        }
       } catch (err) {
         console.error("AI analysis failed", err);
+        if (analysisRequestRef.current === requestId) {
+          updateMapping(item.key, { analysisError: analysisErrorMessage(err) });
+        }
       } finally {
-        setAnalyzingKey(null);
+        if (analysisRequestRef.current === requestId) setAnalyzingKey(null);
       }
     },
-    [date, matchedByItem, updateMapping],
+    [analyzingKey, date, matchedByItem, updateMapping],
   );
 
   /* ---- Date label ---- */
@@ -350,7 +462,7 @@ export default function WorkLogPage() {
               <button
                 type="button"
                 className={styles.analyzeButton}
-                disabled={matched.length === 0 || analyzingKey === item.key}
+                disabled={matched.length === 0 || analyzingKey !== null}
                 onClick={() => handleAnalyze(item)}
               >
                 {analyzingKey === item.key ? (
@@ -368,9 +480,15 @@ export default function WorkLogPage() {
                 onChange={(e) =>
                   updateMapping(item.key, { workLogText: e.target.value })
                 }
+                disabled={analyzingKey === item.key}
                 placeholder={t("workLog.placeholder")}
                 rows={5}
               />
+              {mapping?.analysisError && (
+                <div className={styles.errorState} role="alert">
+                  {mapping.analysisError}
+                </div>
+              )}
             </div>
 
             {/* Copy button */}

@@ -2,6 +2,14 @@
    Base form styles live in AISettings.module.css (.content, .externalInput, etc.).
    Only add styles that are unique to this tab. */
 
+/* Make Row's .control div grow so URL/PAT inputs fill available width.
+   Selector: .wideField > div.row > div.control — targets the control
+   via structural selectors, works regardless of CSS-module hashing. */
+.wideField > div > div:last-child {
+  flex: 0 0 66%;
+  max-width: 66%;
+}
+
 /* Password field wrapper: positions the toggle button inside the input */
 .patField {
   position: relative;
@@ -38,4 +46,16 @@
 .patToggle:hover {
   color: var(--text-strong);
   background: var(--surface-2);
+}
+
+.worklogPrompt {
+  width: 100%;
+}
+
+.characterCount {
+  display: block;
+  margin-top: 6px;
+  text-align: right;
+  font-size: 12px;
+  color: var(--text-muted);
 }

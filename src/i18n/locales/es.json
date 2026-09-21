@@ -53,7 +53,6 @@
       "aiSummary": "Resumen de IA",
       "aiSettings": "Ajustes de IA",
       "categories": "Categorías",
-      "devices": "Nube",
       "settings": "Ajustes",
       "chat": "Chat"
     }
@@ -66,12 +65,6 @@
       "resting": "En reposo",
       "stop": "Detener",
       "toggleAria": "Alternar la captura"
-    },
-    "sync": {
-      "connected": "Conectado",
-      "signedOut": "Sin sesión",
-      "aria": "Gestionar dispositivos y sincronización en la nube",
-      "title": "Dispositivos / Sincronización en la nube"
     }
   },
   "windowControls": {
@@ -784,6 +777,7 @@
       "models": "Modelos",
       "general": "General",
       "prompt": "Prompt",
+      "jiraMcp": "Jira",
       "external": "API en la nube"
     },
     "engine": {
@@ -1073,141 +1067,25 @@
       "ocrDailyDescription": "Procesa a diario, a la hora indicada, las capturas acumuladas",
       "addTimeAria": "Añadir una hora",
       "removeTimeAria": "Quitar la última hora añadida"
+    },
+    "jiraMcp": {
+      "title": "Conexión a Jira",
+      "description": "Conéctate al servidor de Jira para obtener Work Items en la página Work Log.",
+      "urlLabel": "URL del servidor",
+      "urlPlaceholder": "http://dxdev.satreci.com/mcpwork/mcp",
+      "patLabel": "Personal Access Token (PAT)",
+      "patPlaceholder": "Pega tu PAT",
+      "worklogPromptLabel": "Prompt de plantilla de Work Log",
+      "worklogPromptDescription": "Se incluye al generar descripciones de Work Log. Define el formato o la plantilla; OCR y los Work Items siguen siendo la fuente de los hechos.",
+      "worklogPromptPlaceholder": "Ejemplo: [Trabajo realizado]\n- Lo que se hizo\n\n[Resultado]\n- Resultado confirmado",
+      "characterCount": "{{count}} / 1.000 caracteres"
     }
   },
   "devices": {
-    "title": "Dispositivos",
-    "meta": "Gestiona el nombre de este dispositivo y el estado de sincronización de los demás.",
     "sectionSelf": "Este dispositivo",
-    "sectionOthers": "Otros dispositivos",
-    "emptyOthers": "Inicia sesión con la misma cuenta en otro dispositivo para verlo aquí.",
-    "relative": {
-      "justNow": "Ahora mismo",
-      "minutesAgo": "hace {{count}} min",
-      "hoursAgo": "hace {{count}} h",
-      "daysAgo": "hace {{count}} d"
-    },
-    "cloud": {
-      "state": {
-        "connected": "Conectado a Google Drive",
-        "notSignedIn": "Sin conectar",
-        "notConfigured": "Sin configurar"
-      },
-      "desc": {
-        "signInPrompt": "Inicia sesión con Google para sincronizar los datos de actividad entre dispositivos a través de Drive. Las capturas de pantalla nunca se envían.",
-        "configurePrompt": "Antes del primer uso, crea una credencial OAuth en la Google Cloud Console (unos 3 minutos)."
-      },
-      "stats": {
-        "pending": "{{count}} pendiente(s)",
-        "synced": "Sincronizado · {{when}}",
-        "waitingFirst": "Esperando la primera sincronización",
-        "deadLetter": "· {{count}} con fallo"
-      },
-      "editCreds": "Editar las credenciales",
-      "actions": {
-        "syncNow": "Sincronizar ahora",
-        "syncing": "Sincronizando…",
-        "syncNowTitle": "Sincronizar ahora",
-        "signOut": "Cerrar sesión",
-        "signIn": "Volver a iniciar sesión",
-        "signOutTitle": "Cerrar la sesión de esta cuenta",
-        "reauthTitle": "Credenciales caducadas: vuelve a iniciar sesión para renovar el token",
-        "signInWithGoogle": "Iniciar sesión con Google",
-        "signingIn": "Abriendo el navegador…",
-        "configureOAuth": "Configurar OAuth",
-        "restartApp": "Reiniciar la aplicación"
-      },
-      "restartHint": "Has iniciado sesión con una cuenta nueva. Reinicia la aplicación para cambiar a la base de datos local de esa cuenta.",
-      "datasets": {
-        "title": "Qué sincronizar",
-        "hint": "De forma predeterminada solo se sincronizan los datos básicos (estadísticas de uso, categorías). Los elementos de abajo contienen información más sensible y hay que activarlos uno a uno; las imágenes de las capturas nunca salen de este dispositivo.",
-        "summaries": {
-          "label": "Texto de los resúmenes de IA",
-          "desc": "Texto generado de los informes diarios y semanales, para leerlo en otros dispositivos.",
-          "warn": "Al activarlo, el texto completo de tus informes diarios y semanales (incluidos los nombres de archivo, los títulos de páginas y los vídeos mencionados) se enviará al área de datos de aplicación de tu Google Drive y se sincronizará con los demás dispositivos de la misma cuenta."
-        },
-        "chat": {
-          "label": "Historial del chat",
-          "desc": "Conversaciones y mensajes del chat, para continuarlos en otros dispositivos.",
-          "warn": "Al activarlo, todas las conversaciones y mensajes del Chat — incluidas tus preguntas y los fragmentos de texto de pantalla citados en las respuestas — se enviarán al área de datos de aplicación de tu Google Drive y se sincronizarán con los demás dispositivos."
-        },
-        "memory": {
-          "label": "Memoria de pantalla (texto completo)",
-          "desc": "Índice del texto que apareció en tu pantalla, para buscarlo entre dispositivos. Lo más sensible.",
-          "warn": "Al activarlo, todo el texto del índice de memoria de pantalla — el contenido literal que apareció en tu pantalla (conversaciones, correos, código, páginas web, etc.) — se enviará al área de datos de aplicación de tu Google Drive y se sincronizará con los demás dispositivos. Este es el nivel más sensible; confirma que confías en todos los dispositivos de esta cuenta."
-        },
-        "confirmTitle": "¿Enviar «{{dataset}}» a la nube?",
-        "confirmNote": "Los datos se quedan solo en el área de datos de aplicación de tu propio Google Drive (invisible para otras apps). Puedes desactivarlo cuando quieras y borrarlos con «Borrar los datos de la nube».",
-        "confirmAction": "Entiendo el riesgo, activar"
-      },
-      "oauthFallback": {
-        "hint": "¿No se abrió el navegador? Copia el enlace de inicio de sesión y pégalo en cualquier navegador.",
-        "copy": "Copiar el enlace de inicio de sesión",
-        "copied": "Copiado"
-      }
-    },
-    "errors": {
-      "credExpired": "Credenciales caducadas. Vuelve a iniciar sesión.",
-      "transient": "La sincronización encontró un error temporal; reintentando automáticamente…"
-    },
-    "setup": {
-      "header": "Configuración de la credencial OAuth",
-      "collapse": "Contraer",
-      "step1": {
-        "title": "Activa la API de Google Drive",
-        "bodyPrefix": "Pulsa el botón ",
-        "cueEnable": "Enable",
-        "bodySuffix": ".",
-        "openLink": "Abrir Drive API"
-      },
-      "step2": {
-        "title": "Configura la pantalla de consentimiento de OAuth",
-        "bodyPrefix": "La primera vez, pulsa ",
-        "cueStart": "Get started",
-        "bodyMiddle": " → pon un nombre de aplicación y un correo cualesquiera → define Audience como External → vuelve a indicar tu correo en la información de contacto → pulsa ",
-        "cueCreate": "Create",
-        "bodySuffix": ".",
-        "openLink": "Abrir Audience"
-      },
-      "step3": {
-        "title": "Crea el cliente OAuth",
-        "bodyPrefix": "Abre Clients a la izquierda → pulsa ",
-        "cueCreateClient": "+ Create client",
-        "bodySuffix": " arriba → elige Desktop app como tipo de aplicación → ponle el nombre que quieras. A continuación se mostrarán el Client ID y el Client Secret.",
-        "openLink": "Abrir Clients"
-      },
-      "step4": {
-        "title": "Pega abajo el Client ID y el Client Secret",
-        "clientIdLabel": "Client ID",
-        "secretLabel": "Client Secret",
-        "showSecret": "Mostrar el client secret",
-        "hideSecret": "Ocultar el client secret",
-        "show": "Mostrar",
-        "hide": "Ocultar"
-      }
-    },
     "self": {
       "tag": "Este dispositivo",
-      "lastActivity": "Última actividad: {{when}}",
-      "todayCount": "{{count}} capturas hoy",
-      "appearanceAria": "Cambiar la apariencia",
-      "appearanceTitle": "Cambiar el color y el icono",
-      "doubleClickToRename": "Haz doble clic para renombrar",
-      "renameAria": "Renombrar",
       "renameTitle": "Renombrar"
-    },
-    "other": {
-      "lastSync": "Última sincronización: {{when}}",
-      "forgetAria": "Olvidar {{name}} de la nube",
-      "forgetTitle": "Quitar este dispositivo de la nube de forma permanente"
-    },
-    "forgetDialog": {
-      "title": "¿Olvidar «{{name}}» de la nube?",
-      "intro": "Esto elimina de forma permanente todos los datos que este dispositivo tiene en Google Drive, además de todos los registros de actividad vinculados a él en esta y en cualquier otra máquina. Los demás dispositivos borrarán los datos de este la próxima vez que se conecten a la nube.",
-      "unaffected": "Úsalo cuando el dispositivo ya no esté contigo (vendido / perdido / sustituido) y no borraras sus datos de la nube en su momento: los registros que quedan siguen apareciendo en tus otros dispositivos.",
-      "confirm": "Olvidar el dispositivo",
-      "doneToast": "«{{name}}» se quitó de la nube ({{count}} archivos de Drive eliminados).",
-      "error": "No se pudo quitar el dispositivo: {{message}}"
     }
   },
   "aiSummary": {
